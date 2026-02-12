@@ -1,56 +1,11 @@
 import streamlit as st
 import pandas as pd
+import numpy as np
 import requests
-from io import BytesIO
-
-def read_excel_from_github(raw_url: str, header=None):
-    """
-    Lê um Excel direto de uma URL RAW do GitHub.
-    Suporta repos públicos.
-    """
-    r = requests.get(raw_url, timeout=60)
-    r.raise_for_status()
-    return pd.read_excel(BytesIO(r.content), header=header)
-
-def read_carteira_weird_excel_from_github(raw_url: str):
-    """
-    Carteira com header real na linha 3 (index 2) — mesmo padrão que você já usa.
-    """
-    raw = read_excel_from_github(raw_url, header=None)
-    headers = raw.iloc[2].tolist()
-    df = raw.iloc[3:].copy()
-    df.columns = headers
-    return df.reset_index(drop=True)
-
-st.sidebar.header("📦 Fonte dos arquivos (GitHub)")
-
-agenda_url = st.sidebar.text_input(
-    "URL RAW da Agenda (ListaAtendimentos.xlsx)",
-    value="https://raw.githubusercontent.com/carlinhosg7/rota_certa/main/ListaAtendimentos.xlsx"
-)
-
-carteira_url = st.sidebar.text_input(
-    "URL RAW da Carteira (base_clientes.xlsx)",
-    value="https://raw.githubusercontent.com/carlinhosg7/rota_certa/main/base_clientes.xlsx"
-)
-
-btn = st.sidebar.button("🔄 Carregar do GitHub")
-
-if not btn:
-    st.info("Cole as URLs RAW no sidebar e clique em **Carregar do GitHub**.")
-    st.stop()
-
-try:
-    df_ag = read_excel_from_github(agenda_url, header=0)  # agenda normal
-except Exception as e:
-    st.error(f"Erro ao ler AGENDA do GitHub: {e}")
-    st.stop()
-
-try:
-    df_ca = read_carteira_weird_excel_from_github(carteira_url)  # carteira header linha 3
-except Exception as e:
-    st.error(f"Erro ao ler CARTEIRA do GitHub: {e}")
-    st.stop()
+import unicodedata
+from datetime import date
+from io import StringIO
+from urllib.parse import quote
 
 # ==============================
 # CONFIG

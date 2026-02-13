@@ -10,13 +10,39 @@ from datetime import date
 from io import BytesIO, StringIO
 from urllib.parse import quote
 
+
+# ----------------------------
+# ✅ CONFIGURAÇÃO INICIAL DA PÁGINA (PRIMEIRO COMANDO DO STREAMLIT)
+# ----------------------------
+st.set_page_config(
+    page_title="Dashboard Analítico",
+    page_icon="https://raw.githubusercontent.com/carlinhosg7/rota_certa/main/logo_kidy_icon.ico",
+    layout="wide"
+)
+# ==============================
+
 # ==============================
 # CONFIG
 # ==============================
 MUNICIPIOS_URL = "https://raw.githubusercontent.com/kelvins/Municipios-Brasileiros/main/csv/municipios.csv"
 ESTADOS_URL = "https://raw.githubusercontent.com/kelvins/Municipios-Brasileiros/main/csv/estados.csv"
 
-st.set_page_config(page_title="🔥 Rota Campeã Automática", layout="wide")
+# ==============================
+# HEADER COM LOGO KIDY
+# ==============================
+
+col_logo, col_title = st.columns([1,6])
+
+LOGO_KIDY = "https://raw.githubusercontent.com/carlinhosg7/rota_certa/main/logo_kidy.png"
+
+col_logo, col_title = st.columns([1,6])
+
+with col_logo:
+    st.image(LOGO_KIDY, width=90)
+
+with col_title:
+    st.title("KIDY ROTA CERTA (Agenda → Raio → Clientes sem atendimento)")
+
 
 # ==============================
 # GITHUB LOADER (BLINDADO)
@@ -235,7 +261,7 @@ def build_route_order(points, w_op, w_dist):
 # ==============================
 # STREAMLIT
 # ==============================
-st.title("🔥 KIDY ROTA CERTA")
+#st.title("🔥 KIDY ROTA CERTA")
 
 # ---- Sidebar: GitHub (sem upload)
 st.sidebar.header("📦 Fonte dos arquivos (GitHub)")
@@ -468,7 +494,7 @@ city_stats = tmp[["city_key", "op_score", "clientes", "dias_media", "vlr_total"]
 # ==============================
 # OUTPUT TABELAS
 # ==============================
-st.subheader("🏆 Rota Campeã — Ranking de cidades no raio (mais oportunidade primeiro)")
+st.subheader("🏆 KIDY ROTA CERTA — Ranking de cidades no raio (mais oportunidade primeiro)")
 st.caption("Score base = (qtd clientes sem atendimento) × (média de dias sem compra).")
 st.dataframe(ranking, use_container_width=True, height=300)
 

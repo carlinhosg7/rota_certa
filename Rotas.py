@@ -1,56 +1,14 @@
+# ==============================
+# IMPORTS (ORDEM CERTA)
+# ==============================
 import streamlit as st
 import pandas as pd
+import numpy as np
 import requests
-from io import BytesIO
-
-def read_excel_from_github(raw_url: str, header=None):
-    """
-    Lê um Excel direto de uma URL RAW do GitHub.
-    Suporta repos públicos.
-    """
-    r = requests.get(raw_url, timeout=60)
-    r.raise_for_status()
-    return pd.read_excel(BytesIO(r.content), header=header)
-
-def read_carteira_weird_excel_from_github(raw_url: str):
-    """
-    Carteira com header real na linha 3 (index 2) — mesmo padrão que você já usa.
-    """
-    raw = read_excel_from_github(raw_url, header=None)
-    headers = raw.iloc[2].tolist()
-    df = raw.iloc[3:].copy()
-    df.columns = headers
-    return df.reset_index(drop=True)
-
-st.sidebar.header("📦 Fonte dos arquivos (GitHub)")
-
-agenda_url = st.sidebar.text_input(
-    "URL RAW da Agenda (ListaAtendimentos.xlsx)",
-    value="https://raw.githubusercontent.com/carlinhosg7/rota_certa/main/ListaAtendimentos.xlsx"
-)
-
-carteira_url = st.sidebar.text_input(
-    "URL RAW da Carteira (base_clientes.xlsx)",
-    value="https://raw.githubusercontent.com/carlinhosg7/rota_certa/main/base_clientes.xlsx"
-)
-
-btn = st.sidebar.button("🔄 Carregar do GitHub")
-
-if not btn:
-    st.info("Cole as URLs RAW no sidebar e clique em **Carregar do GitHub**.")
-    st.stop()
-
-try:
-    df_ag = read_excel_from_github(agenda_url, header=0)  # agenda normal
-except Exception as e:
-    st.error(f"Erro ao ler AGENDA do GitHub: {e}")
-    st.stop()
-
-try:
-    df_ca = read_carteira_weird_excel_from_github(carteira_url)  # carteira header linha 3
-except Exception as e:
-    st.error(f"Erro ao ler CARTEIRA do GitHub: {e}")
-    st.stop()
+import unicodedata
+from datetime import date
+from io import BytesIO, StringIO
+from urllib.parse import quote
 
 # ==============================
 # CONFIG
@@ -59,6 +17,47 @@ MUNICIPIOS_URL = "https://raw.githubusercontent.com/kelvins/Municipios-Brasileir
 ESTADOS_URL = "https://raw.githubusercontent.com/kelvins/Municipios-Brasileiros/main/csv/estados.csv"
 
 st.set_page_config(page_title="🔥 Rota Campeã Automática", layout="wide")
+
+# ==============================
+# GITHUB LOADER (BLINDADO)
+# ==============================
+def fetch_github_file(user, repo, filepath, branches=("main", "master"), timeout=60):
+    """
+    Baixa arquivo do GitHub via RAW.
+    - Tenta branches em ordem (main, master)
+    - Encode automático de espaços e caracteres
+    """
+    safe_path = quote(filepath, safe="/")
+    last_err = None
+
+    for br in branches:
+        url = f"https://raw.githubusercontent.com/{user}/{repo}/{br}/{safe_path}"
+        try:
+            r = requests.get(url, timeout=timeout)
+            r.raise_for_status()
+            return r.content, url
+        except Exception as e:
+            last_err = e
+
+    raise RuntimeError(f"Não achei o arquivo '{filepath}' em {branches}. Último erro: {last_err}")
+
+@st.cache_data(ttl=600, show_spinner=False)
+def read_excel_github(user, repo, filepath, header=0):
+    content, used_url = fetch_github_file(user, repo, filepath)
+    df = pd.read_excel(BytesIO(content), header=header)
+    return df, used_url
+
+@st.cache_data(ttl=600, show_spinner=False)
+def read_carteira_weird_github(user, repo, filepath):
+    """
+    Carteira com header real na linha 3 (index 2)
+    """
+    content, used_url = fetch_github_file(user, repo, filepath)
+    raw = pd.read_excel(BytesIO(content), header=None)
+    headers = raw.iloc[2].tolist()
+    df = raw.iloc[3:].copy()
+    df.columns = headers
+    return df.reset_index(drop=True), used_url
 
 # ==============================
 # FUNÇÕES BASE
@@ -98,18 +97,13 @@ def haversine_vec(lat1, lon1, lat2, lon2):
     lon1 = np.radians(float(lon1))
     lat2 = np.radians(np.asarray(lat2, dtype="float64"))
     lon2 = np.radians(np.asarray(lon2, dtype="float64"))
+
     dlat = lat2 - lat1
     dlon = lon2 - lon1
+
     a = np.sin(dlat / 2) ** 2 + np.cos(lat1) * np.cos(lat2) * np.sin(dlon / 2) ** 2
     c = 2 * np.arcsin(np.sqrt(a))
     return R * c
-
-def read_carteira_weird_excel(uploaded_file):
-    raw = pd.read_excel(uploaded_file, header=None)
-    headers = raw.iloc[2].tolist()
-    df = raw.iloc[3:].copy()
-    df.columns = headers
-    return df.reset_index(drop=True)
 
 @st.cache_data(show_spinner=False)
 def load_geo():
@@ -134,6 +128,7 @@ def load_geo():
     df = df.dropna(subset=["nome", "uf", "latitude", "longitude"]).copy()
     df["city_key"] = df["nome"].apply(norm) + " - " + df["uf"].apply(norm)
     df = df.drop_duplicates(subset=["city_key"], keep="first")
+
     return df[["city_key", "latitude", "longitude"]].copy()
 
 def try_build_city_key_from_agenda(df_ag):
@@ -151,7 +146,6 @@ def try_build_city_key_from_agenda(df_ag):
     return df_ag
 
 def osrm_route_geojson(points):
-    # OSRM espera lon,lat
     coord_str = ";".join([f"{p['lon']},{p['lat']}" for p in points])
     url = f"https://router.project-osrm.org/route/v1/driving/{coord_str}"
     params = {"overview": "full", "geometries": "geojson", "steps": "false"}
@@ -164,17 +158,12 @@ def osrm_route_geojson(points):
     return [(lat, lon) for lon, lat in coords]
 
 def google_maps_dir_url(points):
-    """
-    points: lista de dicts [{lat, lon}]
-    Google Maps dir: https://www.google.com/maps/dir/lat,lon/lat,lon/...
-    """
     parts = [f"{p['lat']:.6f},{p['lon']:.6f}" for p in points]
     return "https://www.google.com/maps/dir/" + "/".join([quote(p) for p in parts])
 
 def chunk_list(lst, n_chunks):
     if n_chunks <= 1:
         return [lst]
-    # divide aproximadamente igual
     k = len(lst)
     base = k // n_chunks
     extra = k % n_chunks
@@ -192,10 +181,6 @@ def minmax_scale(s):
     return (s - s.min()) / (s.max() - s.min())
 
 def pick_stops_hybrid(city_base, df_raio, city_stats, n_stops, w_op, w_dist):
-    """
-    Seleciona cidades combinando oportunidade e proximidade:
-    score_final = w_op * op_norm + w_dist * (1 - dist_norm)
-    """
     df = df_raio[df_raio["CITY_BASE"] == city_base].copy()
     df = df[df["CITY_IN_RAIO"] != city_base].copy()
     if df.empty:
@@ -210,20 +195,15 @@ def pick_stops_hybrid(city_base, df_raio, city_stats, n_stops, w_op, w_dist):
     return df[["CITY_IN_RAIO", "DIST_KM", "op_score", "final_score"]].reset_index(drop=True)
 
 def build_route_order(points, w_op, w_dist):
-    """
-    Rota comercial: vizinho mais próximo + oportunidade no próximo passo.
-    custo = w_dist * dist_norm - w_op * op_norm (queremos menor custo)
-    """
     if len(points) <= 2:
         return list(range(len(points)))
 
     coords = np.array([(p["lat"], p["lon"]) for p in points], dtype="float64")
     op = np.array([p.get("op", 0.0) for p in points], dtype="float64")
-    op_norm = op.copy()
-    if op_norm.max() != op_norm.min():
-        op_norm = (op_norm - op_norm.min()) / (op_norm.max() - op_norm.min())
+    if op.max() != op.min():
+        op_norm = (op - op.min()) / (op.max() - op.min())
     else:
-        op_norm = np.zeros_like(op_norm)
+        op_norm = np.zeros_like(op)
 
     n = len(points)
     visited = np.zeros(n, dtype=bool)
@@ -234,6 +214,7 @@ def build_route_order(points, w_op, w_dist):
         i = order[-1]
         d = haversine_vec(coords[i, 0], coords[i, 1], coords[:, 0], coords[:, 1])
         d[visited] = np.inf
+
         d_norm = d.copy()
         finite = np.isfinite(d_norm)
         if finite.any():
@@ -254,21 +235,61 @@ def build_route_order(points, w_op, w_dist):
 # ==============================
 # STREAMLIT
 # ==============================
-st.title("🔥 ROTA CAMPEÃ AUTOMÁTICA (Agenda → Raio → Clientes sem atendimento)")
+st.title("🔥 KIDY ROTA CERTA")
 
-col1, col2 = st.columns(2)
-with col1:
-    agenda = st.file_uploader("📅 Upload Agenda (ListaAtendimentos.xlsx)", type=["xlsx"])
-with col2:
-    carteira = st.file_uploader("👥 Upload Carteira (clientes/cidade/última compra)", type=["xlsx"])
+# ---- Sidebar: GitHub (sem upload)
+st.sidebar.header("📦 Fonte dos arquivos (GitHub)")
 
-if not agenda or not carteira:
-    st.info("Envie **Agenda** e **Carteira**.")
+default_agenda = "ListaAtendimentos.xlsx"
+default_carteira = "base clientes.xlsx"  # se você não renomeou
+
+USER_DEFAULT = "carlinhosg7"
+REPO_DEFAULT = "rota_certa"
+
+user_repo = st.sidebar.text_input("GitHub USER", value=USER_DEFAULT)
+repo_name = st.sidebar.text_input("GitHub REPO", value=REPO_DEFAULT)
+
+agenda_path = st.sidebar.text_input("Arquivo AGENDA (path no repo)", value=default_agenda)
+carteira_path = st.sidebar.text_input("Arquivo CARTEIRA (path no repo)", value=default_carteira)
+
+# estado
+if "gh_loaded" not in st.session_state:
+    st.session_state.gh_loaded = False
+
+colA, colB = st.sidebar.columns(2)
+with colA:
+    if st.button("✅ Carregar", use_container_width=True):
+        st.session_state.gh_loaded = True
+with colB:
+    if st.button("🔄 Recarregar", use_container_width=True):
+        st.session_state.gh_loaded = True
+        st.cache_data.clear()
+
+if not st.session_state.gh_loaded:
+    st.info("No sidebar, clique em **Carregar**.")
     st.stop()
 
-# --- Agenda
-df_ag = pd.read_excel(agenda)
+# --- Carrega do GitHub
+try:
+    df_ag, url_ag = read_excel_github(user_repo, repo_name, agenda_path, header=0)
+    st.sidebar.success("Agenda OK")
+    st.sidebar.caption(url_ag)
+except Exception as e:
+    st.session_state.gh_loaded = False
+    st.error(f"Erro ao ler AGENDA do GitHub: {e}")
+    st.stop()
 
+try:
+    df_ca, url_ca = read_carteira_weird_github(user_repo, repo_name, carteira_path)
+    st.sidebar.success("Carteira OK")
+    st.sidebar.caption(url_ca)
+except Exception as e:
+    st.session_state.gh_loaded = False
+    st.error(f"Erro ao ler CARTEIRA do GitHub: {e}")
+    st.stop()
+
+
+# --- Valida agenda
 need_ag = ["DATA AGENDADO", "CLIENTE", "CIDADE", "LOGIN", "SITUAÇÃO"]
 missing_ag = [c for c in need_ag if c not in df_ag.columns]
 if missing_ag:
@@ -279,9 +300,7 @@ df_ag["DATA AGENDADO"] = pd.to_datetime(df_ag["DATA AGENDADO"], errors="coerce")
 df_ag["COD_CLIENTE"] = df_ag["CLIENTE"].apply(extract_cod_cliente).astype(str).str.strip()
 df_ag = try_build_city_key_from_agenda(df_ag)
 
-# --- Carteira
-df_ca = read_carteira_weird_excel(carteira)
-
+# --- Valida carteira
 need_ca = ["Codigo Cliente", "Cidade", "Uf", "Data Ultima Compra", "Codigo Representante", "Razao Social"]
 missing_ca = [c for c in need_ca if c not in df_ca.columns]
 if missing_ca:
@@ -295,8 +314,14 @@ df_ca["city_key"] = df_ca["Cidade"].apply(norm) + " - " + df_ca["Uf"].apply(norm
 df_ca["DATA_ULT_COMPRA"] = pd.to_datetime(df_ca["Data Ultima Compra"], errors="coerce")
 
 # --- Sidebar filtros
+st.sidebar.divider()
 st.sidebar.header("🎯 Filtros")
+
 rep_list = sorted(df_ag["LOGIN"].dropna().astype(str).unique().tolist())
+if not rep_list:
+    st.error("Não achei LOGINs na agenda.")
+    st.stop()
+
 rep_sel = st.sidebar.selectbox("Representante (LOGIN)", rep_list)
 
 df_ag_rep = df_ag[df_ag["LOGIN"].astype(str) == str(rep_sel)].copy()
@@ -333,6 +358,7 @@ df_ag_f = df_ag_rep[
     (df_ag_rep["DATA AGENDADO"] >= dt_ini) &
     (df_ag_rep["DATA AGENDADO"] <= dt_fim)
 ].copy()
+
 if status_sel:
     df_ag_f = df_ag_f[df_ag_f["SITUAÇÃO"].isin(status_sel)].copy()
 
@@ -368,6 +394,7 @@ if base.empty:
 
 # --- Calcula união das cidades no raio + tabela df_raio
 near_set = set()
+
 lat_all = geo_all["latitude"].values
 lon_all = geo_all["longitude"].values
 key_all = geo_all["city_key"].values
@@ -376,14 +403,21 @@ rows_raio = []
 for _, r in base.iterrows():
     lat1 = float(r["latitude"])
     lon1 = float(r["longitude"])
+
     d = haversine_vec(lat1, lon1, lat_all, lon_all)
     mask = d <= float(radius)
+
     keys = key_all[mask]
     dists = d[mask]
+
     for k, dist_km in zip(keys, dists):
         k = str(k)
         near_set.add(k)
-        rows_raio.append({"CITY_BASE": str(r["city_key"]), "CITY_IN_RAIO": k, "DIST_KM": float(dist_km)})
+        rows_raio.append({
+            "CITY_BASE": str(r["city_key"]),
+            "CITY_IN_RAIO": k,
+            "DIST_KM": float(dist_km)
+        })
 
 df_raio = pd.DataFrame(rows_raio)
 if not df_raio.empty:
@@ -420,11 +454,10 @@ ranking = (
         vlr_total=("Vlr Venda", "sum"),
     )
 )
+
 ranking["score"] = ranking["clientes"] * ranking["dias_media"]
 ranking = ranking.sort_values("score", ascending=False).reset_index(drop=True)
 
-# Oportunidade (pode mexer aqui se quiser mais “comercial”):
-# op_score = 0.55*(clientes_norm) + 0.35*(dias_norm) + 0.10*(vlr_norm)
 tmp = ranking.copy()
 tmp["clientes_n"] = minmax_scale(tmp["clientes"])
 tmp["dias_n"] = minmax_scale(tmp["dias_media"])
@@ -460,7 +493,6 @@ with st.expander("Ver cidades no raio (cidade-base → cidade encontrada → km)
 st.divider()
 st.subheader("🗺️ Mapa — cidade da agenda + cidades-alvo (rota por ruas + prioridade + heatmap + Google Maps)")
 
-# dependências
 try:
     import folium
     from streamlit_folium import st_folium
@@ -469,11 +501,9 @@ except Exception:
     st.error("Falta dependência do mapa. Instale: pip install folium streamlit-folium")
     st.stop()
 
-# escolhe cidade base (da agenda filtrada)
 bases_disponiveis = sorted(base["city_key"].astype(str).unique().tolist())
 city_base_sel = st.selectbox("Cidade base (da agenda)", bases_disponiveis, index=0)
 
-# Seleciona cidades alvo (híbrido: oportunidade + proximidade)
 df_stops = pick_stops_hybrid(
     city_base=city_base_sel,
     df_raio=df_raio,
@@ -487,7 +517,6 @@ if df_stops.empty:
     st.warning("Não consegui achar cidades próximas/oportunidade para essa base.")
     st.stop()
 
-# monta pontos: base + stops
 df_pts = (
     pd.DataFrame({"city_key": [city_base_sel] + df_stops["CITY_IN_RAIO"].tolist()})
     .merge(geo_all, on="city_key", how="left")
@@ -504,17 +533,16 @@ if len(df_pts) < 2:
     st.error("Não consegui coordenadas suficientes para montar o mapa/rota.")
     st.stop()
 
-# define prioridade (cores) por quantis do op_score (só para os stops, não a base)
 stops_only = df_pts[df_pts["city_key"] != city_base_sel].copy()
 q33 = stops_only["op_score"].quantile(0.33) if not stops_only.empty else 0.0
 q66 = stops_only["op_score"].quantile(0.66) if not stops_only.empty else 0.0
 
 def prio_color(op):
     if op >= q66:
-        return ("#1e9b4b", "ALTA")     # verde
+        return ("#1e9b4b", "ALTA")
     if op >= q33:
-        return ("#f2b705", "MÉDIA")    # amarelo
-    return ("#d62828", "BAIXA")        # vermelho
+        return ("#f2b705", "MÉDIA")
+    return ("#d62828", "BAIXA")
 
 points = []
 for _, r in df_pts.iterrows():
@@ -522,10 +550,12 @@ for _, r in df_pts.iterrows():
     lat = float(r["latitude"])
     lon = float(r["longitude"])
     op = float(r["op_score"])
+
     if key == city_base_sel:
         color, prio = ("#111111", "BASE")
     else:
         color, prio = prio_color(op)
+
     points.append({
         "key": key,
         "lat": lat,
@@ -538,11 +568,9 @@ for _, r in df_pts.iterrows():
         "prio": prio
     })
 
-# ordem da rota (comercial)
 order = build_route_order(points, w_op=w_op, w_dist=w_dist)
 points_ordered = [points[i] for i in order]
 
-# tenta rota por ruas (OSRM)
 rota_latlon = None
 rota_modo = None
 try:
@@ -552,12 +580,10 @@ except Exception:
     rota_latlon = [(p["lat"], p["lon"]) for p in points_ordered]
     rota_modo = "Linha reta (fallback — OSRM indisponível)"
 
-# cria mapa
 center_lat = float(points_ordered[0]["lat"])
 center_lon = float(points_ordered[0]["lon"])
 m = folium.Map(location=[center_lat, center_lon], zoom_start=7, control_scale=True)
 
-# Heatmap (só stops)
 heat_data = []
 for p in points_ordered:
     if p["prio"] != "BASE":
@@ -565,8 +591,6 @@ for p in points_ordered:
 if len(heat_data) > 0:
     HeatMap(heat_data, radius=25, blur=18, min_opacity=0.25).add_to(m)
 
-# Markers (CircleMarker por cor)
-# Base
 folium.CircleMarker(
     location=[points_ordered[0]["lat"], points_ordered[0]["lon"]],
     radius=10,
@@ -578,7 +602,6 @@ folium.CircleMarker(
     popup=f"BASE: {points_ordered[0]['key']}"
 ).add_to(m)
 
-# Stops
 for idx, p in enumerate(points_ordered[1:], start=1):
     txt = (
         f"<b>PARADA {idx} — {p['key']}</b><br>"
@@ -599,17 +622,14 @@ for idx, p in enumerate(points_ordered[1:], start=1):
         popup=folium.Popup(txt, max_width=350)
     ).add_to(m)
 
-# Rota desenhada
 folium.PolyLine(locations=rota_latlon, weight=5, opacity=0.9).add_to(m)
 
-# bounds
 bounds = [[p["lat"], p["lon"]] for p in points_ordered]
 m.fit_bounds(bounds)
 
 st.caption(f"Rota desenhada usando: **{rota_modo}** | Pesos: Oportunidade={w_op:.2f}, Distância={w_dist:.2f}")
 st_folium(m, use_container_width=True, height=650)
 
-# tabela da ordem da rota
 df_ord = pd.DataFrame({
     "ORDEM": list(range(len(points_ordered))),
     "TIPO": ["BASE"] + [f"PARADA {i}" for i in range(1, len(points_ordered))],
@@ -630,7 +650,6 @@ st.dataframe(df_ord, use_container_width=True, height=280)
 # ==============================
 st.subheader("📅 Roteiro por dia + abrir no Google Maps")
 
-# divide APENAS as paradas (sem a base), e recoloca base no começo de cada dia
 stops = points_ordered[1:]
 dias = int(dias)
 dias = max(1, min(dias, 7))
@@ -639,7 +658,7 @@ chunks = chunk_list(stops, dias)
 
 roteiros = []
 for d, chunk in enumerate(chunks, start=1):
-    day_points = [points_ordered[0]] + chunk  # base + paradas do dia
+    day_points = [points_ordered[0]] + chunk
     gmaps = google_maps_dir_url(day_points)
 
     roteiros.append({
@@ -655,6 +674,5 @@ st.dataframe(df_days[["DIA", "PARADAS", "CIDADES"]], use_container_width=True, h
 for _, r in df_days.iterrows():
     st.markdown(f"**Dia {int(r['DIA'])}** — {int(r['PARADAS'])} paradas  \n➡️ [Abrir no Google Maps]({r['GOOGLE_MAPS_URL']})")
 
-# (opcional) baixar roteiro
 csv_bytes = df_days.to_csv(index=False).encode("utf-8")
 st.download_button("⬇️ Baixar roteiro por dia (CSV)", data=csv_bytes, file_name="roteiro_por_dia.csv", mime="text/csv")

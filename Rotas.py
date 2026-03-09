@@ -10,16 +10,23 @@ from datetime import date
 from io import BytesIO, StringIO
 from urllib.parse import quote
 
+# Retry/backoff (robustez de rede)
+from requests.adapters import HTTPAdapter
+try:
+    from urllib3.util.retry import Retry
+except Exception:
+    Retry = None
+
 
 # ----------------------------
 # ✅ CONFIGURAÇÃO INICIAL DA PÁGINA (PRIMEIRO COMANDO DO STREAMLIT)
 # ----------------------------
 st.set_page_config(
-    page_title="Dashboard Analítico",
+    page_title="Kidy Rota Certa",
     page_icon="https://raw.githubusercontent.com/carlinhosg7/rota_certa/main/logo_kidy_icon.ico",
     layout="wide"
 )
-# ==============================
+
 
 # ==============================
 # CONFIG
@@ -27,66 +34,41 @@ st.set_page_config(
 MUNICIPIOS_URL = "https://raw.githubusercontent.com/kelvins/Municipios-Brasileiros/main/csv/municipios.csv"
 ESTADOS_URL = "https://raw.githubusercontent.com/kelvins/Municipios-Brasileiros/main/csv/estados.csv"
 
-# ==============================
-# HEADER COM LOGO KIDY
-# ==============================
-
-col_logo, col_title = st.columns([1,6])
-
 LOGO_KIDY = "https://raw.githubusercontent.com/carlinhosg7/rota_certa/main/logo_kidy.png"
 
-col_logo, col_title = st.columns([1,6])
-
-with col_logo:
-    st.image(LOGO_KIDY, width=90)
-
-with col_title:
-    st.title("KIDY ROTA CERTA (Agenda → Raio → Clientes sem atendimento)")
+USER_DEFAULT = "carlinhosg7"
+REPO_DEFAULT = "rota_certa"
+DEFAULT_AGENDA = "ListaAtendimentos.xlsx"
+DEFAULT_CARTEIRA = "base clientes.xlsx"  # se você não renomeou
 
 
 # ==============================
-# GITHUB LOADER (BLINDADO)
+# REQUESTS SESSION (RETRY)
 # ==============================
-def fetch_github_file(user, repo, filepath, branches=("main", "master"), timeout=60):
-    """
-    Baixa arquivo do GitHub via RAW.
-    - Tenta branches em ordem (main, master)
-    - Encode automático de espaços e caracteres
-    """
-    safe_path = quote(filepath, safe="/")
-    last_err = None
+@st.cache_resource(show_spinner=False)
+def get_session():
+    s = requests.Session()
+    s.headers.update({"User-Agent": "Mozilla/5.0 (KidyRotaCerta/1.0)"})
 
-    for br in branches:
-        url = f"https://raw.githubusercontent.com/{user}/{repo}/{br}/{safe_path}"
-        try:
-            r = requests.get(url, timeout=timeout)
-            r.raise_for_status()
-            return r.content, url
-        except Exception as e:
-            last_err = e
+    if Retry is not None:
+        retry = Retry(
+            total=5,
+            connect=5,
+            read=5,
+            backoff_factor=0.6,
+            status_forcelist=(429, 500, 502, 503, 504),
+            allowed_methods=frozenset(["GET", "POST"]),
+            raise_on_status=False,
+        )
+        adapter = HTTPAdapter(max_retries=retry)
+        s.mount("http://", adapter)
+        s.mount("https://", adapter)
 
-    raise RuntimeError(f"Não achei o arquivo '{filepath}' em {branches}. Último erro: {last_err}")
+    return s
 
-@st.cache_data(ttl=600, show_spinner=False)
-def read_excel_github(user, repo, filepath, header=0):
-    content, used_url = fetch_github_file(user, repo, filepath)
-    df = pd.read_excel(BytesIO(content), header=header)
-    return df, used_url
-
-@st.cache_data(ttl=600, show_spinner=False)
-def read_carteira_weird_github(user, repo, filepath):
-    """
-    Carteira com header real na linha 3 (index 2)
-    """
-    content, used_url = fetch_github_file(user, repo, filepath)
-    raw = pd.read_excel(BytesIO(content), header=None)
-    headers = raw.iloc[2].tolist()
-    df = raw.iloc[3:].copy()
-    df.columns = headers
-    return df.reset_index(drop=True), used_url
 
 # ==============================
-# FUNÇÕES BASE
+# FUNÇÕES AUX
 # ==============================
 def norm(x):
     if x is None or pd.isna(x):
@@ -95,6 +77,9 @@ def norm(x):
     x = unicodedata.normalize("NFKD", x)
     x = "".join([c for c in x if not unicodedata.combining(c)])
     return x.upper().strip()
+
+def safe_str(x):
+    return "" if pd.isna(x) else str(x).strip()
 
 def split_cidade_uf(cidade_raw: str):
     if pd.isna(cidade_raw):
@@ -114,8 +99,28 @@ def extract_cod_cliente(cliente_raw: str) -> str:
     digits = "".join([c for c in s if c.isdigit()])
     return digits.strip()
 
-def safe_str(x):
-    return "" if pd.isna(x) else str(x).strip()
+def normalize_colname(c: str) -> str:
+    c = "" if c is None else str(c)
+    c = unicodedata.normalize("NFKD", c)
+    c = "".join([ch for ch in c if not unicodedata.combining(ch)])
+    c = c.strip().upper()
+    c = c.replace("\n", " ").replace("\r", " ")
+    c = " ".join(c.split())
+    return c
+
+def standardize_columns(df: pd.DataFrame):
+    """Padroniza nomes das colunas (remove acento, uppercase, trim)."""
+    df = df.copy()
+    df.columns = [normalize_colname(c) for c in df.columns]
+    return df
+
+def col_pick(df: pd.DataFrame, candidates):
+    """Retorna o primeiro nome de coluna existente em df dentro de candidates (já normalizados)."""
+    cols = set(df.columns)
+    for c in candidates:
+        if c in cols:
+            return c
+    return None
 
 def haversine_vec(lat1, lon1, lat2, lon2):
     R = 6371.0
@@ -126,66 +131,15 @@ def haversine_vec(lat1, lon1, lat2, lon2):
 
     dlat = lat2 - lat1
     dlon = lon2 - lon1
-
     a = np.sin(dlat / 2) ** 2 + np.cos(lat1) * np.cos(lat2) * np.sin(dlon / 2) ** 2
     c = 2 * np.arcsin(np.sqrt(a))
     return R * c
 
-@st.cache_data(show_spinner=False)
-def load_geo():
-    r1 = requests.get(MUNICIPIOS_URL, timeout=30)
-    r1.raise_for_status()
-    df_m = pd.read_csv(StringIO(r1.text))
-    df_m.columns = [c.strip().lower() for c in df_m.columns]
-
-    r2 = requests.get(ESTADOS_URL, timeout=30)
-    r2.raise_for_status()
-    df_e = pd.read_csv(StringIO(r2.text))
-    df_e.columns = [c.strip().lower() for c in df_e.columns]
-
-    df_m["codigo_uf"] = pd.to_numeric(df_m.get("codigo_uf"), errors="coerce")
-    df_e["codigo_uf"] = pd.to_numeric(df_e.get("codigo_uf"), errors="coerce")
-
-    df = df_m.merge(df_e[["codigo_uf", "uf"]], on="codigo_uf", how="left")
-
-    df["latitude"] = pd.to_numeric(df.get("latitude"), errors="coerce")
-    df["longitude"] = pd.to_numeric(df.get("longitude"), errors="coerce")
-
-    df = df.dropna(subset=["nome", "uf", "latitude", "longitude"]).copy()
-    df["city_key"] = df["nome"].apply(norm) + " - " + df["uf"].apply(norm)
-    df = df.drop_duplicates(subset=["city_key"], keep="first")
-
-    return df[["city_key", "latitude", "longitude"]].copy()
-
-def try_build_city_key_from_agenda(df_ag):
-    cidade_split = df_ag["CIDADE"].apply(split_cidade_uf)
-    df_ag["CIDADE_ONLY"], df_ag["UF_FROM_CIDADE"] = zip(*cidade_split)
-
-    if "UF" in df_ag.columns:
-        df_ag["UF_FINAL"] = df_ag["UF"].apply(safe_str)
-        df_ag.loc[df_ag["UF_FINAL"].eq(""), "UF_FINAL"] = df_ag["UF_FROM_CIDADE"].apply(safe_str)
-    else:
-        df_ag["UF_FINAL"] = df_ag["UF_FROM_CIDADE"].apply(safe_str)
-
-    df_ag["CIDADE_FINAL"] = df_ag["CIDADE_ONLY"].apply(safe_str)
-    df_ag["city_key"] = df_ag["CIDADE_FINAL"].apply(norm) + " - " + df_ag["UF_FINAL"].apply(norm)
-    return df_ag
-
-def osrm_route_geojson(points):
-    coord_str = ";".join([f"{p['lon']},{p['lat']}" for p in points])
-    url = f"https://router.project-osrm.org/route/v1/driving/{coord_str}"
-    params = {"overview": "full", "geometries": "geojson", "steps": "false"}
-    r = requests.get(url, params=params, timeout=30)
-    r.raise_for_status()
-    data = r.json()
-    if "routes" not in data or not data["routes"]:
-        raise ValueError("OSRM sem rotas retornadas.")
-    coords = data["routes"][0]["geometry"]["coordinates"]  # [[lon, lat], ...]
-    return [(lat, lon) for lon, lat in coords]
-
-def google_maps_dir_url(points):
-    parts = [f"{p['lat']:.6f},{p['lon']:.6f}" for p in points]
-    return "https://www.google.com/maps/dir/" + "/".join([quote(p) for p in parts])
+def minmax_scale(s):
+    s = pd.to_numeric(s, errors="coerce").fillna(0.0)
+    if s.max() == s.min():
+        return pd.Series(np.zeros(len(s)), index=s.index, dtype="float64")
+    return (s - s.min()) / (s.max() - s.min())
 
 def chunk_list(lst, n_chunks):
     if n_chunks <= 1:
@@ -200,11 +154,140 @@ def chunk_list(lst, n_chunks):
         start += size
     return [x for x in out if len(x) > 0]
 
-def minmax_scale(s):
-    s = pd.to_numeric(s, errors="coerce").fillna(0.0)
-    if s.max() == s.min():
-        return pd.Series(np.zeros(len(s)), index=s.index, dtype="float64")
-    return (s - s.min()) / (s.max() - s.min())
+
+# ==============================
+# HEADER COM LOGO KIDY
+# ==============================
+col_logo, col_title = st.columns([1, 6])
+with col_logo:
+    st.image(LOGO_KIDY, width=90)
+with col_title:
+    st.title("KIDY ROTA CERTA (Agenda → Raio → Clientes sem atendimento)")
+
+
+# ==============================
+# GITHUB LOADER (BLINDADO)
+# ==============================
+def fetch_github_file(user, repo, filepath, branches=("main", "master"), timeout=60):
+    """
+    Baixa arquivo do GitHub via RAW.
+    - Tenta branches em ordem (main, master)
+    - Encode automático de espaços e caracteres
+    - Usa Session com retry/backoff
+    """
+    safe_path = quote(filepath, safe="/")
+    last_err = None
+    sess = get_session()
+
+    for br in branches:
+        url = f"https://raw.githubusercontent.com/{user}/{repo}/{br}/{safe_path}"
+        try:
+            r = sess.get(url, timeout=timeout)
+            if r.status_code >= 400:
+                # tenta próxima branch
+                last_err = RuntimeError(f"HTTP {r.status_code} em {url}")
+                continue
+            return r.content, url
+        except Exception as e:
+            last_err = e
+
+    raise RuntimeError(f"Não achei o arquivo '{filepath}' em {branches}. Último erro: {last_err}")
+
+@st.cache_data(ttl=600, show_spinner=False)
+def read_excel_github(user, repo, filepath, header=0):
+    content, used_url = fetch_github_file(user, repo, filepath)
+    df = pd.read_excel(BytesIO(content), header=header)
+    return df, used_url
+
+@st.cache_data(ttl=600, show_spinner=False)
+def read_carteira_weird_github(user, repo, filepath):
+    """
+    Carteira com header real na linha 3 (index 2)
+    """
+    content, used_url = fetch_github_file(user, repo, filepath)
+    raw = pd.read_excel(BytesIO(content), header=None)
+
+    headers = raw.iloc[2].tolist()
+    df = raw.iloc[3:].copy()
+    df.columns = headers
+    df = df.reset_index(drop=True)
+    return df, used_url
+
+
+# ==============================
+# GEO (BLINDADO)
+# ==============================
+@st.cache_data(show_spinner=False, ttl=86400)
+def load_geo():
+    sess = get_session()
+
+    r1 = sess.get(MUNICIPIOS_URL, timeout=45)
+    r1.raise_for_status()
+    df_m = pd.read_csv(StringIO(r1.text))
+    df_m.columns = [c.strip().lower() for c in df_m.columns]
+
+    r2 = sess.get(ESTADOS_URL, timeout=45)
+    r2.raise_for_status()
+    df_e = pd.read_csv(StringIO(r2.text))
+    df_e.columns = [c.strip().lower() for c in df_e.columns]
+
+    # valida colunas essenciais
+    need_m = {"nome", "codigo_uf", "latitude", "longitude"}
+    need_e = {"codigo_uf", "uf"}
+    if not need_m.issubset(set(df_m.columns)):
+        raise ValueError(f"municipios.csv sem colunas esperadas: faltando {sorted(list(need_m - set(df_m.columns)))}")
+    if not need_e.issubset(set(df_e.columns)):
+        raise ValueError(f"estados.csv sem colunas esperadas: faltando {sorted(list(need_e - set(df_e.columns)))}")
+
+    df_m["codigo_uf"] = pd.to_numeric(df_m["codigo_uf"], errors="coerce")
+    df_e["codigo_uf"] = pd.to_numeric(df_e["codigo_uf"], errors="coerce")
+
+    df = df_m.merge(df_e[["codigo_uf", "uf"]], on="codigo_uf", how="left")
+
+    df["latitude"] = pd.to_numeric(df["latitude"], errors="coerce")
+    df["longitude"] = pd.to_numeric(df["longitude"], errors="coerce")
+
+    df = df.dropna(subset=["nome", "uf", "latitude", "longitude"]).copy()
+    df["city_key"] = df["nome"].apply(norm) + " - " + df["uf"].apply(norm)
+    df = df.drop_duplicates(subset=["city_key"], keep="first")
+
+    return df[["city_key", "latitude", "longitude"]].copy()
+
+
+def try_build_city_key_from_agenda(df_ag, col_cidade, col_uf=None):
+    cidade_split = df_ag[col_cidade].apply(split_cidade_uf)
+    df_ag["CIDADE_ONLY"], df_ag["UF_FROM_CIDADE"] = zip(*cidade_split)
+
+    if col_uf and col_uf in df_ag.columns:
+        df_ag["UF_FINAL"] = df_ag[col_uf].apply(safe_str)
+        df_ag.loc[df_ag["UF_FINAL"].eq(""), "UF_FINAL"] = df_ag["UF_FROM_CIDADE"].apply(safe_str)
+    else:
+        df_ag["UF_FINAL"] = df_ag["UF_FROM_CIDADE"].apply(safe_str)
+
+    df_ag["CIDADE_FINAL"] = df_ag["CIDADE_ONLY"].apply(safe_str)
+    df_ag["city_key"] = df_ag["CIDADE_FINAL"].apply(norm) + " - " + df_ag["UF_FINAL"].apply(norm)
+    return df_ag
+
+
+# ==============================
+# ROTEAMENTO
+# ==============================
+def osrm_route_geojson(points):
+    sess = get_session()
+    coord_str = ";".join([f"{p['lon']},{p['lat']}" for p in points])
+    url = f"https://router.project-osrm.org/route/v1/driving/{coord_str}"
+    params = {"overview": "full", "geometries": "geojson", "steps": "false"}
+    r = sess.get(url, params=params, timeout=30)
+    r.raise_for_status()
+    data = r.json()
+    if "routes" not in data or not data["routes"]:
+        raise ValueError("OSRM sem rotas retornadas.")
+    coords = data["routes"][0]["geometry"]["coordinates"]  # [[lon, lat], ...]
+    return [(lat, lon) for lon, lat in coords]
+
+def google_maps_dir_url(points):
+    parts = [f"{p['lat']:.6f},{p['lon']:.6f}" for p in points]
+    return "https://www.google.com/maps/dir/" + "/".join([quote(p) for p in parts])
 
 def pick_stops_hybrid(city_base, df_raio, city_stats, n_stops, w_op, w_dist):
     df = df_raio[df_raio["CITY_BASE"] == city_base].copy()
@@ -258,40 +341,39 @@ def build_route_order(points, w_op, w_dist):
 
     return order
 
+
 # ==============================
 # STREAMLIT
 # ==============================
-#st.title("🔥 KIDY ROTA CERTA")
-
-# ---- Sidebar: GitHub (sem upload)
 st.sidebar.header("📦 Fonte dos arquivos (GitHub)")
-
-default_agenda = "ListaAtendimentos.xlsx"
-default_carteira = "base clientes.xlsx"  # se você não renomeou
-
-USER_DEFAULT = "carlinhosg7"
-REPO_DEFAULT = "rota_certa"
 
 user_repo = st.sidebar.text_input("GitHub USER", value=USER_DEFAULT)
 repo_name = st.sidebar.text_input("GitHub REPO", value=REPO_DEFAULT)
 
-agenda_path = st.sidebar.text_input("Arquivo AGENDA (path no repo)", value=default_agenda)
-carteira_path = st.sidebar.text_input("Arquivo CARTEIRA (path no repo)", value=default_carteira)
+agenda_path = st.sidebar.text_input("Arquivo AGENDA (path no repo)", value=DEFAULT_AGENDA)
+carteira_path = st.sidebar.text_input("Arquivo CARTEIRA (path no repo)", value=DEFAULT_CARTEIRA)
 
 # estado
 if "gh_loaded" not in st.session_state:
-    st.session_state.gh_loaded = False
+    st.session_state["gh_loaded"] = False
 
 colA, colB = st.sidebar.columns(2)
-with colA:
-    if st.button("✅ Carregar", use_container_width=True):
-        st.session_state.gh_loaded = True
-with colB:
-    if st.button("🔄 Recarregar", use_container_width=True):
-        st.session_state.gh_loaded = True
-        st.cache_data.clear()
 
-if not st.session_state.gh_loaded:
+with colA:
+    btn_carregar = st.button("✅ Carregar", use_container_width=True, key="btn_carregar")
+
+with colB:
+    btn_recarregar = st.button("🔄 Recarregar", use_container_width=True, key="btn_recarregar")
+
+if btn_carregar:
+    st.session_state["gh_loaded"] = True
+
+if btn_recarregar:
+    st.session_state["gh_loaded"] = True
+    st.cache_data.clear()
+    st.cache_resource.clear()
+
+if not st.session_state["gh_loaded"]:
     st.info("No sidebar, clique em **Carregar**.")
     st.stop()
 
@@ -314,58 +396,89 @@ except Exception as e:
     st.error(f"Erro ao ler CARTEIRA do GitHub: {e}")
     st.stop()
 
+# --- Padroniza colunas (tolerante)
+df_ag = standardize_columns(df_ag)
+df_ca = standardize_columns(df_ca)
 
-# --- Valida agenda
-need_ag = ["DATA AGENDADO", "CLIENTE", "CIDADE", "LOGIN", "SITUAÇÃO"]
-missing_ag = [c for c in need_ag if c not in df_ag.columns]
-if missing_ag:
-    st.error(f"A agenda está sem colunas obrigatórias: {missing_ag}")
+# --- Mapeia colunas agenda (tolerante)
+COL_DATA = col_pick(df_ag, ["DATA AGENDADO", "DATA", "DATA AGEND"])
+COL_CLIENTE = col_pick(df_ag, ["CLIENTE", "CLIENTES"])
+COL_CIDADE = col_pick(df_ag, ["CIDADE", "MUNICIPIO", "MUNICÍPIO"])
+COL_UF = col_pick(df_ag, ["UF", "ESTADO"])
+COL_LOGIN = col_pick(df_ag, ["LOGIN", "REPRESENTANTE", "CODIGO REPRESENTANTE", "CÓDIGO REPRESENTANTE"])
+COL_STATUS = col_pick(df_ag, ["SITUACAO", "SITUAÇÃO", "STATUS"])
+
+missing = [nm for nm, col in [
+    ("DATA AGENDADO", COL_DATA),
+    ("CLIENTE", COL_CLIENTE),
+    ("CIDADE", COL_CIDADE),
+    ("LOGIN", COL_LOGIN),
+    ("SITUAÇÃO", COL_STATUS),
+] if col is None]
+if missing:
+    st.error(f"A agenda está sem colunas obrigatórias (mesmo tentando variações): {missing}\n\n"
+             f"Colunas encontradas na agenda: {list(df_ag.columns)}")
     st.stop()
 
-df_ag["DATA AGENDADO"] = pd.to_datetime(df_ag["DATA AGENDADO"], errors="coerce").dt.date
-df_ag["COD_CLIENTE"] = df_ag["CLIENTE"].apply(extract_cod_cliente).astype(str).str.strip()
-df_ag = try_build_city_key_from_agenda(df_ag)
+# --- Ajusta tipos e campos agenda
+df_ag[COL_DATA] = pd.to_datetime(df_ag[COL_DATA], errors="coerce").dt.date
+df_ag["COD_CLIENTE"] = df_ag[COL_CLIENTE].apply(extract_cod_cliente).astype(str).str.strip()
+df_ag = try_build_city_key_from_agenda(df_ag, col_cidade=COL_CIDADE, col_uf=COL_UF)
 
-# --- Valida carteira
-need_ca = ["Codigo Cliente", "Cidade", "Uf", "Data Ultima Compra", "Codigo Representante", "Razao Social"]
-missing_ca = [c for c in need_ca if c not in df_ca.columns]
+# --- Mapeia colunas carteira (tolerante)
+CA_COD = col_pick(df_ca, ["CODIGO CLIENTE", "CÓDIGO CLIENTE", "COD CLIENTE"])
+CA_CIDADE = col_pick(df_ca, ["CIDADE"])
+CA_UF = col_pick(df_ca, ["UF"])
+CA_DULT = col_pick(df_ca, ["DATA ULTIMA COMPRA", "DATA ÚLTIMA COMPRA", "ULTIMA COMPRA"])
+CA_REP = col_pick(df_ca, ["CODIGO REPRESENTANTE", "CÓDIGO REPRESENTANTE", "REPRESENTANTE", "LOGIN"])
+CA_RAZAO = col_pick(df_ca, ["RAZAO SOCIAL", "RAZÃO SOCIAL", "CLIENTE", "NOME"])
+
+missing_ca = [nm for nm, col in [
+    ("Codigo Cliente", CA_COD),
+    ("Cidade", CA_CIDADE),
+    ("Uf", CA_UF),
+    ("Data Ultima Compra", CA_DULT),
+    ("Codigo Representante", CA_REP),
+    ("Razao Social", CA_RAZAO),
+] if col is None]
 if missing_ca:
-    st.error(f"A carteira está sem colunas obrigatórias: {missing_ca}")
+    st.error(f"A carteira está sem colunas obrigatórias (mesmo tentando variações): {missing_ca}\n\n"
+             f"Colunas encontradas na carteira: {list(df_ca.columns)}")
     st.stop()
 
-df_ca["COD_CLIENTE"] = df_ca["Codigo Cliente"].astype(str).str.strip()
-df_ca["Cidade"] = df_ca["Cidade"].apply(safe_str)
-df_ca["Uf"] = df_ca["Uf"].apply(safe_str)
+df_ca["COD_CLIENTE"] = df_ca[CA_COD].astype(str).str.strip()
+df_ca["Cidade"] = df_ca[CA_CIDADE].apply(safe_str)
+df_ca["Uf"] = df_ca[CA_UF].apply(safe_str)
 df_ca["city_key"] = df_ca["Cidade"].apply(norm) + " - " + df_ca["Uf"].apply(norm)
-df_ca["DATA_ULT_COMPRA"] = pd.to_datetime(df_ca["Data Ultima Compra"], errors="coerce")
+df_ca["DATA_ULT_COMPRA"] = pd.to_datetime(df_ca[CA_DULT], errors="coerce")
 
 # --- Sidebar filtros
 st.sidebar.divider()
 st.sidebar.header("🎯 Filtros")
 
-rep_list = sorted(df_ag["LOGIN"].dropna().astype(str).unique().tolist())
+rep_list = sorted(df_ag[COL_LOGIN].dropna().astype(str).unique().tolist())
 if not rep_list:
     st.error("Não achei LOGINs na agenda.")
     st.stop()
 
 rep_sel = st.sidebar.selectbox("Representante (LOGIN)", rep_list)
 
-df_ag_rep = df_ag[df_ag["LOGIN"].astype(str) == str(rep_sel)].copy()
-df_ca_rep = df_ca[df_ca["Codigo Representante"].astype(str).str.strip() == str(rep_sel)].copy()
+df_ag_rep = df_ag[df_ag[COL_LOGIN].astype(str) == str(rep_sel)].copy()
+df_ca_rep = df_ca[df_ca[CA_REP].astype(str).str.strip() == str(rep_sel)].copy()
 
-min_d = df_ag_rep["DATA AGENDADO"].min()
-max_d = df_ag_rep["DATA AGENDADO"].max()
+min_d = df_ag_rep[COL_DATA].min()
+max_d = df_ag_rep[COL_DATA].max()
 
 dt_ini = st.sidebar.date_input("Data inicial", value=min_d if pd.notna(min_d) else date.today())
 dt_fim = st.sidebar.date_input("Data final", value=max_d if pd.notna(max_d) else date.today())
 
-status_opts = sorted(df_ag_rep["SITUAÇÃO"].dropna().unique().tolist())
+status_opts = sorted(df_ag_rep[COL_STATUS].dropna().unique().tolist())
 default_status = [s for s in status_opts if str(s).upper() != "EXCLUIDO"] or status_opts
 status_sel = st.sidebar.multiselect("Situação (agenda)", status_opts, default=default_status)
 
 radius = st.sidebar.slider("Raio (km)", 50, 300, 100, 10)
 
-# --- TURBO: parâmetros da rota
+# --- TURBO
 st.sidebar.divider()
 st.sidebar.subheader("🚀 Turbo da rota")
 n_stops = st.sidebar.slider("Quantidade de cidades-alvo", 5, 30, 10, 1)
@@ -381,12 +494,12 @@ else:
 
 # aplica filtros na agenda
 df_ag_f = df_ag_rep[
-    (df_ag_rep["DATA AGENDADO"] >= dt_ini) &
-    (df_ag_rep["DATA AGENDADO"] <= dt_fim)
+    (df_ag_rep[COL_DATA] >= dt_ini) &
+    (df_ag_rep[COL_DATA] <= dt_fim)
 ].copy()
 
 if status_sel:
-    df_ag_f = df_ag_f[df_ag_f["SITUAÇÃO"].isin(status_sel)].copy()
+    df_ag_f = df_ag_f[df_ag_f[COL_STATUS].isin(status_sel)].copy()
 
 st.subheader("📊 Base filtrada")
 c1, c2, c3, c4 = st.columns(4)
@@ -409,9 +522,9 @@ base = (
     .merge(geo_all, on="city_key", how="left")
 )
 
-missing = int(base["latitude"].isna().sum())
-if missing > 0:
-    st.warning(f"{missing} cidade(s) da agenda não casaram com a base de coordenadas e serão ignoradas no cálculo.")
+missing_geo = int(base["latitude"].isna().sum())
+if missing_geo > 0:
+    st.warning(f"{missing_geo} cidade(s) da agenda não casaram com a base de coordenadas e serão ignoradas no cálculo.")
 
 base = base.dropna(subset=["latitude", "longitude"]).copy()
 if base.empty:
@@ -420,7 +533,6 @@ if base.empty:
 
 # --- Calcula união das cidades no raio + tabela df_raio
 near_set = set()
-
 lat_all = geo_all["latitude"].values
 lon_all = geo_all["longitude"].values
 key_all = geo_all["city_key"].values
@@ -439,11 +551,7 @@ for _, r in base.iterrows():
     for k, dist_km in zip(keys, dists):
         k = str(k)
         near_set.add(k)
-        rows_raio.append({
-            "CITY_BASE": str(r["city_key"]),
-            "CITY_IN_RAIO": k,
-            "DIST_KM": float(dist_km)
-        })
+        rows_raio.append({"CITY_BASE": str(r["city_key"]), "CITY_IN_RAIO": k, "DIST_KM": float(dist_km)})
 
 df_raio = pd.DataFrame(rows_raio)
 if not df_raio.empty:
@@ -464,10 +572,12 @@ df_gap["dias_sem_compra"] = (ref_dt - df_gap["DATA_ULT_COMPRA"]).dt.days
 df_gap["dias_sem_compra"] = df_gap["dias_sem_compra"].fillna(99999).astype(int)
 
 # ==============================
-# RANKING + CITY STATS (Oportunidade por cidade)
+# RANKING + CITY STATS
 # ==============================
-if "Vlr Venda" in df_gap.columns:
-    df_gap["Vlr Venda"] = pd.to_numeric(df_gap["Vlr Venda"], errors="coerce").fillna(0.0)
+# se tiver coluna de valor na carteira, tenta achar de forma tolerante
+col_vlr = col_pick(df_gap, ["VLR VENDA", "VLR_VENDA", "VALOR VENDA", "VR_TOTAL_VENDA"])
+if col_vlr:
+    df_gap["Vlr Venda"] = pd.to_numeric(df_gap[col_vlr], errors="coerce").fillna(0.0)
 else:
     df_gap["Vlr Venda"] = 0.0
 
@@ -480,7 +590,6 @@ ranking = (
         vlr_total=("Vlr Venda", "sum"),
     )
 )
-
 ranking["score"] = ranking["clientes"] * ranking["dias_media"]
 ranking = ranking.sort_values("score", ascending=False).reset_index(drop=True)
 
@@ -500,21 +609,27 @@ st.dataframe(ranking, use_container_width=True, height=300)
 
 st.subheader("🚫 Clientes sem atendimento dentro do raio (ordenado por dias sem compra)")
 cols_show = [
-    "COD_CLIENTE", "Razao Social", "Cidade", "Uf",
-    "Data Ultima Compra", "dias_sem_compra",
-    "Grupo Cliente", "Codigo Grupo Cliente",
-    "Codigo Representante", "Supervisor",
-    "Qtd Venda", "Vlr Venda"
+    "COD_CLIENTE", normalize_colname("Razao Social"), "Cidade", "Uf",
+    normalize_colname("Data Ultima Compra"), "dias_sem_compra",
+    normalize_colname("Grupo Cliente"), normalize_colname("Codigo Grupo Cliente"),
+    normalize_colname("Codigo Representante"), normalize_colname("Supervisor"),
+    normalize_colname("Qtd Venda"), normalize_colname("Vlr Venda")
 ]
-cols_show = [c for c in cols_show if c in df_gap.columns]
+# adapta para colunas normalizadas (df_ca foi normalizado)
+cols_show_existing = [c for c in cols_show if c in df_gap.columns]
+# garante também as colunas que criamos com nomes exatos
+for must in ["COD_CLIENTE", "Cidade", "Uf", "dias_sem_compra", "Vlr Venda"]:
+    if must in df_gap.columns and must not in cols_show_existing:
+        cols_show_existing.append(must)
+
 df_gap_view = df_gap.sort_values("dias_sem_compra", ascending=False).reset_index(drop=True)
-st.dataframe(df_gap_view[cols_show], use_container_width=True, height=520)
+st.dataframe(df_gap_view[cols_show_existing], use_container_width=True, height=520)
 
 with st.expander("Ver cidades no raio (cidade-base → cidade encontrada → km)"):
     st.dataframe(df_raio, use_container_width=True, height=320)
 
 # ==============================
-# MAPA + ROTA TURBINADA
+# MAPA + ROTA
 # ==============================
 st.divider()
 st.subheader("🗺️ Mapa — cidade da agenda + cidades-alvo (rota por ruas + prioridade + heatmap + Google Maps)")
@@ -701,4 +816,9 @@ for _, r in df_days.iterrows():
     st.markdown(f"**Dia {int(r['DIA'])}** — {int(r['PARADAS'])} paradas  \n➡️ [Abrir no Google Maps]({r['GOOGLE_MAPS_URL']})")
 
 csv_bytes = df_days.to_csv(index=False).encode("utf-8")
-st.download_button("⬇️ Baixar roteiro por dia (CSV)", data=csv_bytes, file_name="roteiro_por_dia.csv", mime="text/csv")
+st.download_button(
+    "⬇️ Baixar roteiro por dia (CSV)",
+    data=csv_bytes,
+    file_name="roteiro_por_dia.csv",
+    mime="text/csv"
+)

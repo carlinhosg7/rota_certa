@@ -2268,6 +2268,7 @@ def geolocalizar_ip(ip):
 
 
 def contexto_acesso():
+    """Contexto leve do acesso. Não faz chamadas externas durante o login."""
     ip = None
     user_agent = ""
     timezone_browser = None
@@ -2293,15 +2294,14 @@ def contexto_acesso():
         pass
 
     navegador, sistema, dispositivo = _detectar_navegador_sistema(user_agent)
-    geo = geolocalizar_ip(ip)
 
     return {
         "ip": ip,
-        "cidade": geo["cidade"],
-        "estado": geo["estado"],
-        "pais": geo["pais"],
-        "latitude": geo["latitude"],
-        "longitude": geo["longitude"],
+        "cidade": None,
+        "estado": None,
+        "pais": None,
+        "latitude": None,
+        "longitude": None,
         "dispositivo": dispositivo,
         "navegador": navegador,
         "sistema_operacional": sistema,
@@ -2310,6 +2310,7 @@ def contexto_acesso():
 
 
 def registrar_log_acesso(usuario_dados, evento="LOGIN"):
+    """Registra somente o evento essencial, sem geolocalização e sem UPDATE extra no login."""
     try:
         supabase = get_supabase()
         ctx = contexto_acesso()
@@ -2319,11 +2320,11 @@ def registrar_log_acesso(usuario_dados, evento="LOGIN"):
             "perfil": usuario_dados.get("perfil"),
             "codigo_representante": usuario_dados.get("codigo_representante"),
             "ip": ctx.get("ip"),
-            "cidade": ctx.get("cidade"),
-            "estado": ctx.get("estado"),
-            "pais": ctx.get("pais"),
-            "latitude": ctx.get("latitude"),
-            "longitude": ctx.get("longitude"),
+            "cidade": None,
+            "estado": None,
+            "pais": None,
+            "latitude": None,
+            "longitude": None,
             "dispositivo": ctx.get("dispositivo"),
             "navegador": ctx.get("navegador"),
             "sistema_operacional": ctx.get("sistema_operacional"),
@@ -2331,16 +2332,8 @@ def registrar_log_acesso(usuario_dados, evento="LOGIN"):
             "evento": evento,
         }
         supabase.table("log_acesso").insert(payload).execute()
-
-        if evento == "LOGIN":
-            supabase.table("usuarios").update({
-                "ultimo_acesso": datetime.now(timezone.utc).isoformat(),
-                "ultimo_ip": ctx.get("ip"),
-                "ultima_cidade": ctx.get("cidade"),
-                "ultimo_estado": ctx.get("estado"),
-            }).eq("usuario", str(usuario_dados.get("usuario", ""))).execute()
     except Exception as e:
-        # O log nunca deve derrubar a aplicação.
+        # O log nunca deve derrubar nem atrasar a aplicação por falha de geolocalização.
         print(f"Falha ao registrar log de acesso: {e}")
 
 
@@ -2740,16 +2733,41 @@ def exibir_logs_acesso_admin():
 
 
 def _buscar_usuario(usuario):
-    supabase = get_supabase()
-    resp = (
-        supabase.table("usuarios")
-        .select("id,usuario,nome,senha_hash,perfil,codigo_representante,ativo,trocar_senha,representante,codigo_supervisor,supervisor,gerente")
-        .eq("usuario", str(usuario).strip())
-        .limit(1)
-        .execute()
-    )
-    dados = resp.data or []
-    return dados[0] if dados else None
+    """Consulta direta ao REST do Supabase com timeout curto para evitar login travado."""
+    url = os.getenv("SUPABASE_URL")
+    key = os.getenv("SUPABASE_SECRET_KEY")
+
+    if not url or not key:
+        try:
+            url = st.secrets["supabase"]["url"]
+            key = st.secrets["supabase"]["secret_key"]
+        except Exception:
+            pass
+
+    if not url or not key:
+        raise RuntimeError("Configuração do Supabase ausente.")
+
+    endpoint = f"{str(url).rstrip('/')}/rest/v1/usuarios"
+    headers = {
+        "apikey": key,
+        "Authorization": f"Bearer {key}",
+        "Accept": "application/json",
+    }
+    params = {
+        "select": "id,usuario,nome,senha_hash,perfil,codigo_representante,ativo,trocar_senha,representante,codigo_supervisor,supervisor,gerente",
+        "usuario": f"eq.{str(usuario).strip()}",
+        "limit": "1",
+    }
+
+    try:
+        resposta = requests.get(endpoint, headers=headers, params=params, timeout=(3, 8))
+        resposta.raise_for_status()
+        dados = resposta.json() or []
+        return dados[0] if dados else None
+    except requests.exceptions.Timeout as e:
+        raise RuntimeError("O banco de autenticação demorou para responder. Tente novamente.") from e
+    except requests.exceptions.RequestException as e:
+        raise RuntimeError(f"Erro de comunicação com o banco de autenticação: {e}") from e
 
 
 def _senha_confere(senha_digitada, senha_hash):

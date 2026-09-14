@@ -2178,17 +2178,15 @@ def analisar_cliente(df_total, df_carteira, codigo_cliente, status_cliente=None)
 # ============================================================
 @st.cache_resource
 def get_supabase():
-    import os
-
     # RENDER
-    uurl = (os.getenv("SUPABASE_URL") or "").strip()
-key = (os.getenv("SUPABASE_SECRET_KEY") or "").strip()
+    url = (os.getenv("SUPABASE_URL") or "").strip()
+    key = (os.getenv("SUPABASE_SECRET_KEY") or "").strip()
 
-    # LOCAL - usa .streamlit/secrets.toml
+    # LOCAL - fallback para .streamlit/secrets.toml
     if not url or not key:
         try:
-            url = st.secrets["supabase"]["url"]
-            key = st.secrets["supabase"]["secret_key"]
+            url = str(st.secrets["supabase"]["url"]).strip()
+            key = str(st.secrets["supabase"]["secret_key"]).strip()
         except Exception:
             pass
 
@@ -2247,10 +2245,14 @@ def _ip_publico(ip):
 
 @st.cache_data(ttl=3600, show_spinner=False)
 def geolocalizar_ip(ip):
-    """Geolocalização aproximada por IP. Não representa GPS/endereço exato."""
-    base = {"cidade": None, "estado": None, "pais": None, "latitude": None, "longitude": None}
-    if not _ip_publico(ip):
-        return base
+    """Não faz chamada externa durante o login para evitar lentidão."""
+    return {
+        "cidade": None,
+        "estado": None,
+        "pais": None,
+        "latitude": None,
+        "longitude": None,
+    }
     try:
         r = requests.get(f"https://ipapi.co/{ip}/json/", timeout=6)
         if r.ok:
@@ -2310,30 +2312,51 @@ def contexto_acesso():
 
 
 def registrar_log_acesso(usuario_dados, evento="LOGIN"):
-    """Registra somente o evento essencial, sem geolocalização e sem UPDATE extra no login."""
+    """Registra o acesso sem geolocalização externa e sem update extra no login."""
     try:
         supabase = get_supabase()
-        ctx = contexto_acesso()
+
+        ip = None
+        user_agent = ""
+
+        try:
+            ip = getattr(st.context, "ip_address", None)
+        except Exception:
+            pass
+
+        try:
+            headers = st.context.headers
+            user_agent = headers.get("User-Agent", "")
+            if not ip:
+                forwarded = headers.get("X-Forwarded-For", "")
+                if forwarded:
+                    ip = forwarded.split(",")[0].strip()
+        except Exception:
+            pass
+
+        navegador, sistema, dispositivo = _detectar_navegador_sistema(user_agent)
+
         payload = {
             "usuario": str(usuario_dados.get("usuario", "")),
             "nome": usuario_dados.get("nome"),
             "perfil": usuario_dados.get("perfil"),
             "codigo_representante": usuario_dados.get("codigo_representante"),
-            "ip": ctx.get("ip"),
+            "ip": ip,
             "cidade": None,
             "estado": None,
             "pais": None,
             "latitude": None,
             "longitude": None,
-            "dispositivo": ctx.get("dispositivo"),
-            "navegador": ctx.get("navegador"),
-            "sistema_operacional": ctx.get("sistema_operacional"),
+            "dispositivo": dispositivo,
+            "navegador": navegador,
+            "sistema_operacional": sistema,
             "session_id": st.session_state.get("session_id"),
             "evento": evento,
         }
+
         supabase.table("log_acesso").insert(payload).execute()
+
     except Exception as e:
-        # O log nunca deve derrubar nem atrasar a aplicação por falha de geolocalização.
         print(f"Falha ao registrar log de acesso: {e}")
 
 
@@ -2733,41 +2756,61 @@ def exibir_logs_acesso_admin():
 
 
 def _buscar_usuario(usuario):
-    """Consulta direta ao REST do Supabase com timeout curto para evitar login travado."""
-    url = os.getenv("SUPABASE_URL")
-    key = os.getenv("SUPABASE_SECRET_KEY")
+    """Busca o usuário no Supabase REST com timeout curto."""
+    url = (os.getenv("SUPABASE_URL") or "").strip()
+    key = (os.getenv("SUPABASE_SECRET_KEY") or "").strip()
 
     if not url or not key:
         try:
-            url = st.secrets["supabase"]["url"]
-            key = st.secrets["supabase"]["secret_key"]
+            url = str(st.secrets["supabase"]["url"]).strip()
+            key = str(st.secrets["supabase"]["secret_key"]).strip()
         except Exception:
             pass
 
     if not url or not key:
-        raise RuntimeError("Configuração do Supabase ausente.")
+        raise RuntimeError(
+            "Configuração do Supabase ausente. "
+            "Configure SUPABASE_URL e SUPABASE_SECRET_KEY."
+        )
 
-    endpoint = f"{str(url).rstrip('/')}/rest/v1/usuarios"
+    endpoint = f"{url.rstrip('/')}/rest/v1/usuarios"
+
     headers = {
         "apikey": key,
         "Authorization": f"Bearer {key}",
         "Accept": "application/json",
     }
+
     params = {
-        "select": "id,usuario,nome,senha_hash,perfil,codigo_representante,ativo,trocar_senha,representante,codigo_supervisor,supervisor,gerente",
+        "select": (
+            "id,usuario,nome,senha_hash,perfil,codigo_representante,"
+            "ativo,trocar_senha,representante,codigo_supervisor,"
+            "supervisor,gerente"
+        ),
         "usuario": f"eq.{str(usuario).strip()}",
         "limit": "1",
     }
 
     try:
-        resposta = requests.get(endpoint, headers=headers, params=params, timeout=(3, 8))
+        resposta = requests.get(
+            endpoint,
+            headers=headers,
+            params=params,
+            timeout=8,
+        )
         resposta.raise_for_status()
         dados = resposta.json() or []
         return dados[0] if dados else None
+
     except requests.exceptions.Timeout as e:
-        raise RuntimeError("O banco de autenticação demorou para responder. Tente novamente.") from e
+        raise RuntimeError(
+            "O banco de autenticação demorou mais de 8 segundos para responder."
+        ) from e
+
     except requests.exceptions.RequestException as e:
-        raise RuntimeError(f"Erro de comunicação com o banco de autenticação: {e}") from e
+        raise RuntimeError(
+            f"Erro de comunicação com o banco de autenticação: {e}"
+        ) from e
 
 
 def _senha_confere(senha_digitada, senha_hash):

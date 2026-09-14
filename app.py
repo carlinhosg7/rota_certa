@@ -2176,17 +2176,28 @@ def analisar_cliente(df_total, df_carteira, codigo_cliente, status_cliente=None)
 # ============================================================
 # AUTENTICAÇÃO SUPABASE + LOG DE ACESSO
 # ============================================================
-@st.cache_resource(show_spinner=False)
+@st.cache_resource
 def get_supabase():
-    """Cliente Supabase usando chave secreta guardada no st.secrets."""
-    try:
-        url = st.secrets["supabase"]["url"]
-        key = st.secrets["supabase"]["secret_key"]
-    except Exception as e:
+    import os
+
+    # RENDER
+    url = os.getenv("SUPABASE_URL")
+    key = os.getenv("SUPABASE_SECRET_KEY")
+
+    # LOCAL - usa .streamlit/secrets.toml
+    if not url or not key:
+        try:
+            url = st.secrets["supabase"]["url"]
+            key = st.secrets["supabase"]["secret_key"]
+        except Exception:
+            pass
+
+    if not url or not key:
         raise RuntimeError(
-            "Configuração do Supabase ausente. Crie .streamlit/secrets.toml com "
-            "[supabase], url e secret_key."
-        ) from e
+            "Configuração do Supabase ausente. "
+            "Configure SUPABASE_URL e SUPABASE_SECRET_KEY."
+        )
+
     return create_client(url, key)
 
 

@@ -1,11 +1,12 @@
-streamlit>=1.59
+streamlit
 pandas
 numpy
+pyarrow
+openpyxl
 requests
+bcrypt
+supabase
 Pillow
 folium
 streamlit-folium
-openpyxl
-pyarrow
-supabase
-bcrypt
+scikit-learn

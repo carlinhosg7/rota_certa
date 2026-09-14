@@ -268,7 +268,7 @@ def load_geo():
     return geo[["city_key", "latitude", "longitude"]].copy()
 
 
-@st.cache_data(ttl=3600, show_spinner=False)
+@st.cache_resource(show_spinner=False)
 def carregar_vendas():
     """Carrega todos os DADOS_PREDITIVA_*.parquet da pasta local, em linhas."""
     cols_base = [
@@ -294,15 +294,18 @@ def carregar_vendas():
     partes = []
     for arquivo in arquivos:
         try:
-            d = pd.read_parquet(arquivo)
+            # Descobre o schema sem carregar o Parquet inteiro na memória.
+            import pyarrow.parquet as pq
+            nomes_schema = set(pq.read_schema(arquivo).names)
+            existentes = [c for c in cols_base if c in nomes_schema]
+            if not existentes:
+                continue
+
+            # Lê somente as colunas realmente usadas pelo app.
+            parte = pd.read_parquet(arquivo, columns=existentes)
         except Exception as e:
             raise ValueError(f"Erro ao ler {arquivo.name}: {e}") from e
 
-        # Usa somente as colunas originais. Ignora Codigo Cliente_1, _2 etc.
-        existentes = [c for c in cols_base if c in d.columns]
-        if not existentes:
-            continue
-        parte = d[existentes].copy()
         parte["Arquivo Origem"] = arquivo.name
         partes.append(parte)
 
@@ -400,7 +403,7 @@ def _ler_carteira_excel_bytes(conteudo):
     )
 
 
-@st.cache_data(ttl=3600, show_spinner=False)
+@st.cache_resource(show_spinner=False)
 def carregar_carteira():
     if not ARQUIVO_CARTEIRA.exists():
         raise ValueError(
@@ -507,7 +510,7 @@ def _bloqueio_label(x):
     return str(x).strip()
 
 
-@st.cache_data(ttl=3600, show_spinner=False)
+@st.cache_resource(show_spinner=False)
 def carregar_limite_financeiro():
     """
     Lê DADOS PRDITIVA LIMITE.xlsx e devolve:
@@ -595,7 +598,7 @@ def carregar_limite_financeiro():
     return fin
 
 
-@st.cache_data(ttl=3600, show_spinner=False)
+@st.cache_resource(show_spinner=False)
 def carregar_dados():
     vendas = carregar_vendas()
     carteira = carregar_carteira()
@@ -2312,9 +2315,17 @@ def contexto_acesso():
 
 
 def registrar_log_acesso(usuario_dados, evento="LOGIN"):
-    """Registra o acesso sem geolocalização externa e sem update extra no login."""
+    """Registra acesso sem travar o login. Falha de log nunca bloqueia o usuário."""
     try:
-        supabase = get_supabase()
+        url = (os.getenv("SUPABASE_URL") or "").strip()
+        key = (os.getenv("SUPABASE_SECRET_KEY") or "").strip()
+
+        if not url or not key:
+            try:
+                url = str(st.secrets["supabase"]["url"]).strip()
+                key = str(st.secrets["supabase"]["secret_key"]).strip()
+            except Exception:
+                return
 
         ip = None
         user_agent = ""
@@ -2325,10 +2336,10 @@ def registrar_log_acesso(usuario_dados, evento="LOGIN"):
             pass
 
         try:
-            headers = st.context.headers
-            user_agent = headers.get("User-Agent", "")
+            headers_ctx = st.context.headers
+            user_agent = headers_ctx.get("User-Agent", "")
             if not ip:
-                forwarded = headers.get("X-Forwarded-For", "")
+                forwarded = headers_ctx.get("X-Forwarded-For", "")
                 if forwarded:
                     ip = forwarded.split(",")[0].strip()
         except Exception:
@@ -2354,7 +2365,21 @@ def registrar_log_acesso(usuario_dados, evento="LOGIN"):
             "evento": evento,
         }
 
-        supabase.table("log_acesso").insert(payload).execute()
+        endpoint = f"{url.rstrip('/')}/rest/v1/log_acesso"
+        headers = {
+            "apikey": key,
+            "Authorization": f"Bearer {key}",
+            "Content-Type": "application/json",
+            "Prefer": "return=minimal",
+        }
+
+        # Timeout bem curto: log nunca pode segurar a autenticação.
+        requests.post(
+            endpoint,
+            headers=headers,
+            json=payload,
+            timeout=(1.5, 2.0),
+        )
 
     except Exception as e:
         print(f"Falha ao registrar log de acesso: {e}")
@@ -2881,12 +2906,17 @@ def autenticar_usuario_supabase():
             st.session_state["autenticado"] = True
             st.session_state["usuario_logado"] = dados.get("usuario")
             st.session_state["usuario_dados"] = dados
-            registrar_log_acesso(dados, evento="LOGIN")
+            st.session_state["registrar_login_pendente"] = True
             st.rerun()
 
         st.stop()
 
     dados = st.session_state.get("usuario_dados") or {}
+
+    # Registra o LOGIN depois que a sessão já foi autenticada.
+    # Mesmo se o log falhar, o usuário continua normalmente.
+    if st.session_state.pop("registrar_login_pendente", False):
+        registrar_log_acesso(dados, evento="LOGIN")
 
     # Primeiro acesso dos representantes: obriga troca da senha inicial.
     if bool(dados.get("trocar_senha", False)):

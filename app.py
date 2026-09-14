@@ -2181,8 +2181,8 @@ def get_supabase():
     import os
 
     # RENDER
-    url = os.getenv("SUPABASE_URL")
-    key = os.getenv("SUPABASE_SECRET_KEY")
+    uurl = (os.getenv("SUPABASE_URL") or "").strip()
+key = (os.getenv("SUPABASE_SECRET_KEY") or "").strip()
 
     # LOCAL - usa .streamlit/secrets.toml
     if not url or not key:

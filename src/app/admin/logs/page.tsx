@@ -1,173 +1,329 @@
-"use client";
+import { cookies } from "next/headers";
+import { redirect } from "next/navigation";
+import { createClient } from "@supabase/supabase-js";
 
-import Image from "next/image";
-import { FormEvent, useState } from "react";
-import { useRouter } from "next/navigation";
+import { validarToken } from "@/lib/auth";
+import LogsClient, { type LogAcesso } from "./LogsClient";
 
-export default function Home() {
-  const router = useRouter();
+import "./logs.css";
 
-  const [usuario, setUsuario] = useState("");
-  const [senha, setSenha] = useState("");
-  const [erro, setErro] = useState("");
-  const [loading, setLoading] = useState(false);
+export const runtime = "nodejs";
+export const dynamic = "force-dynamic";
 
-  async function entrar(e: FormEvent) {
-    e.preventDefault();
+export default async function LogsPage() {
+  // =========================================================
+  // 1. VALIDAR SESSÃO
+  // =========================================================
 
-    setErro("");
-    setLoading(true);
+  const cookieStore = await cookies();
 
-    try {
-      const r = await fetch("/api/auth", {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-        },
-        body: JSON.stringify({
-          usuario,
-          senha,
-        }),
-      });
+  const token = cookieStore.get("kidy_session")?.value;
 
-      const d = await r.json();
-
-      /*
-       * TEMPORÁRIO PARA TESTE
-       * Podemos retirar depois que validarmos o fluxo.
-       */
-      console.log("RESPOSTA LOGIN:", d);
-
-      if (!r.ok) {
-        setErro(d.erro || "Falha no login.");
-        return;
-      }
-
-      /*
-       * TROCA OBRIGATÓRIA DE SENHA
-       */
-      if (d.trocar_senha === true) {
-        router.replace("/trocar-senha");
-        return;
-      }
-
-      /*
-       * LOGIN NORMAL
-       */
-      router.replace("/dashboard");
-
-    } catch (error) {
-      console.error("Erro no login:", error);
-
-      setErro(
-        "Não foi possível conectar ao servidor."
-      );
-    } finally {
-      setLoading(false);
-    }
+  if (!token) {
+    redirect("/");
   }
 
-  return (
-    <main className="login-page">
+  const usuario: any = await validarToken(token);
 
-      <section className="login-brand">
+  if (!usuario) {
+    redirect("/");
+  }
 
-        <Image
-          src="/logo-kidy.png"
-          alt="KIDY"
-          width={360}
-          height={250}
-          priority
-        />
+  // =========================================================
+  // 2. VALIDAR PERFIL ADMIN
+  // =========================================================
 
-        <div>
-          <span>
-            KIDY SALES INTELLIGENCE
-          </span>
+  const perfil = String(usuario.perfil || "")
+    .trim()
+    .toUpperCase();
 
-          <h1>
-            Inteligência que transforma dados em rota.
-          </h1>
+  if (perfil !== "ADMIN") {
+    redirect("/dashboard");
+  }
 
-          <p>
-            Planejamento comercial, priorização de clientes
-            e análise preditiva em uma única plataforma.
-          </p>
-        </div>
+  // =========================================================
+  // 3. VARIÁVEIS SUPABASE
+  // =========================================================
 
-      </section>
+  const supabaseUrl = process.env.SUPABASE_URL;
+  const supabaseSecretKey = process.env.SUPABASE_SECRET_KEY;
 
-      <section className="login-side">
+  if (!supabaseUrl || !supabaseSecretKey) {
+    console.error(
+      "[ADMIN LOGS] SUPABASE_URL ou SUPABASE_SECRET_KEY não configurada."
+    );
 
-        <form
-          onSubmit={entrar}
-          className="login-card"
-        >
+    return (
+      <main className="logs-page">
+        <div className="logs-container">
+          <div className="logs-header">
+            <div>
+              <span className="logs-eyebrow">
+                KIDY SALES INTELLIGENCE
+              </span>
 
-          <span className="eyebrow">
-            ACESSO RESTRITO
-          </span>
+              <h1>Logs de acesso</h1>
 
-          <h2>
-            Bem-vindo
-          </h2>
-
-          <p>
-            Entre com seu usuário e senha.
-          </p>
-
-          <label>
-            Usuário
-
-            <input
-              value={usuario}
-              onChange={(e) =>
-                setUsuario(e.target.value)
-              }
-              autoComplete="username"
-              placeholder="Usuário / código"
-              required
-            />
-          </label>
-
-          <label>
-            Senha
-
-            <input
-              type="password"
-              value={senha}
-              onChange={(e) =>
-                setSenha(e.target.value)
-              }
-              autoComplete="current-password"
-              placeholder="Sua senha"
-              required
-            />
-          </label>
-
-          {erro && (
-            <div className="login-error">
-              {erro}
+              <p>
+                Não foi possível conectar ao banco de dados.
+              </p>
             </div>
-          )}
 
-          <button
-            type="submit"
-            disabled={loading}
-          >
-            {loading
-              ? "Entrando..."
-              : "Entrar"}
-          </button>
+            <a href="/dashboard" className="logs-back">
+              ← Voltar
+            </a>
+          </div>
+        </div>
+      </main>
+    );
+  }
 
-          <small>
-            © 2026 KIDY • Sales Intelligence
-          </small>
+  // =========================================================
+  // 4. CLIENTE SUPABASE
+  // =========================================================
 
-        </form>
+  const supabase = createClient(
+    supabaseUrl,
+    supabaseSecretKey,
+    {
+      auth: {
+        persistSession: false,
+        autoRefreshToken: false,
+      },
+    }
+  );
 
-      </section>
+  // =========================================================
+  // 5. CARREGAR LOGS
+  // =========================================================
 
+  const { data, error } = await supabase
+    .from("log_acesso")
+    .select(`
+      id,
+      usuario,
+      nome,
+      perfil,
+      codigo_representante,
+      data_hora,
+      ip,
+      cidade,
+      estado,
+      pais,
+      latitude,
+      longitude,
+      dispositivo,
+      navegador,
+      sistema_operacional,
+      session_id,
+      evento
+    `)
+    .order("data_hora", {
+      ascending: false,
+    })
+    .limit(5000);
+
+  if (error) {
+    console.error(
+      "[ADMIN LOGS] Erro Supabase:",
+      error
+    );
+  }
+
+  const logs: LogAcesso[] = (data ?? []).map(
+    (log: any) => ({
+      id: Number(log.id),
+
+      usuario:
+        log.usuario != null
+          ? String(log.usuario)
+          : null,
+
+      nome:
+        log.nome != null
+          ? String(log.nome)
+          : null,
+
+      perfil:
+        log.perfil != null
+          ? String(log.perfil)
+          : null,
+
+      codigo_representante:
+        log.codigo_representante != null
+          ? String(log.codigo_representante)
+          : null,
+
+      data_hora:
+        log.data_hora != null
+          ? String(log.data_hora)
+          : null,
+
+      ip:
+        log.ip != null
+          ? String(log.ip)
+          : null,
+
+      cidade:
+        log.cidade != null
+          ? String(log.cidade)
+          : null,
+
+      estado:
+        log.estado != null
+          ? String(log.estado)
+          : null,
+
+      pais:
+        log.pais != null
+          ? String(log.pais)
+          : null,
+
+      latitude:
+        log.latitude != null
+          ? Number(log.latitude)
+          : null,
+
+      longitude:
+        log.longitude != null
+          ? Number(log.longitude)
+          : null,
+
+      dispositivo:
+        log.dispositivo != null
+          ? String(log.dispositivo)
+          : null,
+
+      navegador:
+        log.navegador != null
+          ? String(log.navegador)
+          : null,
+
+      sistema_operacional:
+        log.sistema_operacional != null
+          ? String(log.sistema_operacional)
+          : null,
+
+      session_id:
+        log.session_id != null
+          ? String(log.session_id)
+          : null,
+
+      evento:
+        log.evento != null
+          ? String(log.evento)
+          : null,
+    })
+  );
+
+  // =========================================================
+  // 6. TELA
+  // =========================================================
+
+  return (
+    <main className="logs-page">
+      <div className="logs-container">
+
+        <header className="logs-header">
+          <div>
+            <span className="logs-eyebrow">
+              KIDY SALES INTELLIGENCE
+            </span>
+
+            <h1>Logs de acesso</h1>
+
+            <p>
+              Monitoramento de acessos e utilização da plataforma.
+            </p>
+          </div>
+
+          <div className="logs-header-actions">
+            <div className="logs-admin-info">
+              <strong>
+                {usuario.nome ||
+                  usuario.usuario ||
+                  "Administrador"}
+              </strong>
+
+              <span>ADMIN</span>
+            </div>
+
+            <a
+              href="/dashboard"
+              className="logs-back"
+            >
+              ← Voltar ao sistema
+            </a>
+          </div>
+        </header>
+
+        {error ? (
+          <div className="logs-error">
+            Não foi possível carregar os registros de acesso.
+            Verifique a tabela logs_acesso no Supabase.
+          </div>
+        ) : (
+          <>
+            <section className="logs-summary">
+              <div>
+                <small>TOTAL DE REGISTROS</small>
+
+                <strong>
+                  {logs.length.toLocaleString("pt-BR")}
+                </strong>
+              </div>
+
+              <div>
+                <small>USUÁRIOS</small>
+
+                <strong>
+                  {
+                    new Set(
+                      logs
+                        .map((x) => x.usuario)
+                        .filter(Boolean)
+                    ).size
+                  }
+                </strong>
+              </div>
+
+              <div>
+                <small>REPRESENTANTES</small>
+
+                <strong>
+                  {
+                    new Set(
+                      logs
+                        .map(
+                          (x) =>
+                            x.codigo_representante
+                        )
+                        .filter(Boolean)
+                    ).size
+                  }
+                </strong>
+              </div>
+
+              <div>
+                <small>EVENTOS</small>
+
+                <strong>
+                  {
+                    new Set(
+                      logs
+                        .map((x) => x.evento)
+                        .filter(Boolean)
+                    ).size
+                  }
+                </strong>
+              </div>
+            </section>
+
+            <LogsClient logs={logs} />
+          </>
+        )}
+
+      </div>
     </main>
   );
 }

@@ -3,7 +3,6 @@ import { redirect } from "next/navigation";
 import { cookies } from "next/headers";
 
 import { validarToken } from "@/lib/auth";
-import ResultadoAtendimento from "@/components/ResultadoAtendimento";
 import {
   getData,
   cleanCode,
@@ -1119,23 +1118,6 @@ export default async function ClientePage({ params }: Props) {
             </div>
           </div>
         </section>
-
-        {/* RESULTADO DO ATENDIMENTO */}
-        <ResultadoAtendimento
-          codigoCliente={cliente.codigo}
-          nomeCliente={cliente.razao}
-          codigoRepresentante={cliente.rep}
-          usuario={cliente.rep}
-          linhasDisponiveis={[
-            ...new Set(
-              [
-                ...mixLinhas.map((x) => x.linha),
-                ...produtosPotenciais.map((x) => x.linha),
-              ].filter(Boolean)
-            ),
-          ]}
-          campanhasDisponiveis={campanhasAplicaveis.map((x) => x.nome)}
-        />
 
         <section style={styles.preditiva}>
           <div>

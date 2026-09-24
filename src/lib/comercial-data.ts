@@ -87,9 +87,65 @@ type ClienteResumo = Carteira & {
   prioridade: number;
 };
 
+export type ProdutoAutorizado = {
+  codigoLinha: string;
+  linha: string;
+  referencia: string;
+  produto: string;
+  qtdVenda: number;
+};
+
+
+export type MunicipioGeo = {
+  municipio: string;
+  uf: string;
+  codigoIbge: string;
+  lat: number;
+  lon: number;
+  cityKey: string;
+};
+
+export type CidadeRota = {
+  cidade: string;
+  uf: string;
+  cityKey: string;
+
+  lat: number;
+  lon: number;
+
+  // Distância da cidade-base: preserva compatibilidade com a API/tela atual.
+  distanciaKm: number;
+
+  // Sequência otimizada entre as cidades selecionadas.
+  sequencia: number;
+  distanciaAnteriorKm: number;
+  distanciaAcumuladaKm: number;
+
+  clientes: number;
+  vermelhos: number;
+  amarelos: number;
+  verdes: number;
+  diasSemCompraMedio: number;
+  limiteTotal: number;
+  score: number;
+
+  // Métricas da rota completa. Repetidas em cada item para manter
+  // compatibilidade com o retorno atual CidadeRota[].
+  distanciaIdaKm: number;
+  distanciaRetornoKm: number;
+  distanciaTotalKm: number;
+  totalClientes: number;
+  totalVermelhos: number;
+  totalAmarelos: number;
+  totalVerdes: number;
+  limiteTotalRota: number;
+};
+
 type Cache = {
   carteira: Carteira[];
   vendas: Venda[];
+  produtosAutorizados: ProdutoAutorizado[];
+  municipios: MunicipioGeo[];
   loadedAt: number;
 };
 
@@ -407,6 +463,597 @@ async function carregarFinanceiro() {
   return m;
 }
 
+
+/**
+ * PRODUTOS AUTORIZADOS:
+ * A planilha fica no GitHub e funciona como whitelist comercial.
+ * Uma referência só pode aparecer na sugestão se estiver nesta base.
+ */
+async function carregarProdutosAutorizados(): Promise<ProdutoAutorizado[]> {
+  const nome = "DADOS PREDITIVA PRODUTOS EM LINHA.xlsx";
+  const url = githubUrl(nome);
+
+  console.log(`[PRODUTOS] Baixando ${nome} diretamente do GitHub...`);
+
+  const response = await fetch(url, { cache: "no-store" });
+
+  if (!response.ok) {
+    throw new Error(
+      `Erro ao baixar ${nome} do GitHub: HTTP ${response.status} - ${url}`
+    );
+  }
+
+  const buffer = Buffer.from(await response.arrayBuffer());
+
+  if (!buffer.length) {
+    throw new Error(`${nome} foi baixado, mas está vazio.`);
+  }
+
+  const wb = XLSX.read(buffer, { type: "buffer", cellDates: true });
+
+  let rows: any[][] = [];
+
+  for (const sn of wb.SheetNames) {
+    const a = XLSX.utils.sheet_to_json<any[]>(wb.Sheets[sn], {
+      header: 1,
+      defval: null,
+      raw: true,
+    });
+
+    const h = findHeader(a, ["Codigo Linha", "Linha", "Referencia", "Produto"]);
+
+    if (h >= 0) {
+      rows = a.slice(h);
+      break;
+    }
+  }
+
+  if (!rows.length) {
+    throw new Error(
+      `Não localizei o cabeçalho de produtos autorizados em ${nome}.`
+    );
+  }
+
+  const headers = rows[0].map((x) => String(x ?? ""));
+  const porChave = new Map<string, ProdutoAutorizado>();
+
+  for (const arr of rows.slice(1)) {
+    const r = Object.fromEntries(
+      headers.map((h, i) => [h, arr[i]])
+    ) as Record<string, any>;
+
+    const codigoLinha = cleanCode(get(r, ["Codigo Linha"]));
+    const linha = String(get(r, ["Linha"]) ?? "").trim();
+    const referencia = cleanCode(get(r, ["Referencia"]));
+    const produto = String(get(r, ["Produto"]) ?? "").trim();
+    const qtdVenda = number(get(r, ["Qtd Venda"]));
+
+    if (!referencia) continue;
+
+    // A referência pode aparecer em várias cores. Mantemos cada SKU/descrição
+    // para exibição, mas a autorização é controlada pela referência.
+    const chave = `${referencia}|${norm(produto)}`;
+
+    if (!porChave.has(chave)) {
+      porChave.set(chave, {
+        codigoLinha,
+        linha,
+        referencia,
+        produto,
+        qtdVenda,
+      });
+    }
+  }
+
+  const out = [...porChave.values()];
+
+  console.log(
+    `[PRODUTOS] ${out.length.toLocaleString("pt-BR")} produtos autorizados carregados.`
+  );
+
+  return out;
+}
+
+
+/**
+ * MUNICÍPIOS:
+ * Base geográfica oficial do projeto, lida diretamente do GitHub.
+ * Esperado: municipio, uf, codigo_ibge, lat, lon
+ */
+async function carregarMunicipios(): Promise<MunicipioGeo[]> {
+  const nome = "municipios_com_lat_lon.csv";
+  const url = githubUrl(nome);
+
+  console.log(`[GEO] Baixando ${nome} diretamente do GitHub...`);
+
+  const response = await fetch(url, { cache: "no-store" });
+
+  if (!response.ok) {
+    throw new Error(
+      `Erro ao baixar ${nome} do GitHub: HTTP ${response.status} - ${url}`
+    );
+  }
+
+  const buffer = Buffer.from(await response.arrayBuffer());
+
+  if (!buffer.length) {
+    throw new Error(`${nome} foi baixado, mas está vazio.`);
+  }
+
+  // Detecta separador e preserva acentos UTF-8.
+  const conteudo = buffer.toString("utf8").replace(/^\uFEFF/, "");
+  const primeiraLinha = conteudo.split(/\r?\n/, 1)[0] || "";
+  const separador = primeiraLinha.includes(";") ? ";" : ",";
+
+  const wb = XLSX.read(conteudo, {
+    type: "string",
+    raw: true,
+    FS: separador,
+  });
+
+  const ws = wb.Sheets[wb.SheetNames[0]];
+
+  if (!ws) {
+    throw new Error(`${nome} não possui dados válidos.`);
+  }
+
+  const rows = XLSX.utils.sheet_to_json<Record<string, any>>(ws, {
+    defval: null,
+    raw: true,
+  });
+
+  const porCidade = new Map<string, MunicipioGeo>();
+
+  for (const r of rows) {
+    const municipio = String(
+      get(r, ["municipio", "município", "cidade"]) ?? ""
+    ).trim();
+
+    const uf = String(get(r, ["uf"]) ?? "").trim().toUpperCase();
+    const codigoIbge = cleanCode(
+      get(r, ["codigo_ibge", "codigo ibge", "código ibge"])
+    );
+
+    const lat = Number(
+      String(get(r, ["lat", "latitude"]) ?? "").replace(",", ".")
+    );
+    const lon = Number(
+      String(get(r, ["lon", "longitude"]) ?? "").replace(",", ".")
+    );
+
+    if (
+      !municipio ||
+      !uf ||
+      !Number.isFinite(lat) ||
+      !Number.isFinite(lon) ||
+      lat < -90 ||
+      lat > 90 ||
+      lon < -180 ||
+      lon > 180
+    ) {
+      continue;
+    }
+
+    const cityKey = `${norm(municipio)} - ${uf}`;
+
+    porCidade.set(cityKey, {
+      municipio,
+      uf,
+      codigoIbge,
+      lat,
+      lon,
+      cityKey,
+    });
+  }
+
+  const out = [...porCidade.values()];
+
+  console.log(
+    `[GEO] ${out.length.toLocaleString("pt-BR")} municípios com coordenadas carregados.`
+  );
+
+  return out;
+}
+
+function distanciaHaversineKm(
+  lat1: number,
+  lon1: number,
+  lat2: number,
+  lon2: number
+) {
+  const R = 6371.0088;
+  const rad = (v: number) => (v * Math.PI) / 180;
+
+  const dLat = rad(lat2 - lat1);
+  const dLon = rad(lon2 - lon1);
+
+  const a =
+    Math.sin(dLat / 2) ** 2 +
+    Math.cos(rad(lat1)) *
+      Math.cos(rad(lat2)) *
+      Math.sin(dLon / 2) ** 2;
+
+  return 2 * R * Math.asin(Math.sqrt(a));
+}
+
+/**
+ * Sugere cidades a partir de uma cidade-base.
+ * A distância é geográfica (linha reta/Haversine) e o score combina
+ * proximidade + clientes críticos + tamanho da oportunidade.
+ */
+export function sugerirRota(
+  cidadeBase: string,
+  representante: string,
+  carteira: Carteira[],
+  vendas: Venda[],
+  municipios: MunicipioGeo[],
+  limiteCidades = 8,
+  raioMaxKm = 250
+): CidadeRota[] {
+  const rep = cleanCode(representante);
+  const baseKey = norm(cidadeBase).includes(" - ")
+    ? norm(cidadeBase)
+    : "";
+
+  if (!rep || !baseKey) return [];
+
+  const geoMap = new Map(municipios.map((m) => [m.cityKey, m]));
+  const base = geoMap.get(baseKey);
+
+  if (!base) {
+    console.warn(`[ROTA] Cidade-base sem coordenada: ${cidadeBase}`);
+    return [];
+  }
+
+  const carteiraRep = carteira.filter((c) => c.rep === rep);
+  if (!carteiraRep.length) return [];
+
+  // A Venda Mais+ usa exatamente o mesmo universo de clientes da tabela.
+  // Assim, a quantidade exibida no cartão da cidade sempre corresponde
+  // aos clientes que poderão ser exibidos ao clicar nessa cidade.
+  const resumo = resumirClientes(carteiraRep, vendas);
+
+  const porCidade = new Map<
+    string,
+    {
+      cidade: string;
+      uf: string;
+      clientes: Set<string>;
+      vermelhos: number;
+      amarelos: number;
+      verdes: number;
+      dias: number[];
+      limiteTotal: number;
+    }
+  >();
+
+  // Agrupa diretamente o resultado de resumirClientes().
+  // Não usa mais a carteira bruta para contar clientes da rota.
+  for (const r of resumo) {
+    const geo = geoMap.get(r.cityKey);
+    if (!geo) continue;
+
+    const atual = porCidade.get(r.cityKey) || {
+      cidade: r.cidade,
+      uf: r.uf,
+      clientes: new Set<string>(),
+      vermelhos: 0,
+      amarelos: 0,
+      verdes: 0,
+      dias: [],
+      limiteTotal: 0,
+    };
+
+    if (!atual.clientes.has(r.codigo)) {
+      atual.clientes.add(r.codigo);
+      atual.limiteTotal += r.limite || 0;
+
+      if (r.status.startsWith("🔴")) atual.vermelhos += 1;
+      else if (r.status.startsWith("🟡")) atual.amarelos += 1;
+      else if (r.status.startsWith("🟢")) atual.verdes += 1;
+
+      if (Number.isFinite(r.diasSemCompra)) {
+        atual.dias.push(r.diasSemCompra);
+      }
+    }
+
+    porCidade.set(r.cityKey, atual);
+  }
+
+  const candidatasBase = [...porCidade.entries()]
+    .map(([cityKey, c]) => {
+      const geo = geoMap.get(cityKey)!;
+      const distanciaKm = distanciaHaversineKm(
+        base.lat,
+        base.lon,
+        geo.lat,
+        geo.lon
+      );
+
+      const diasSemCompraMedio = c.dias.length
+        ? c.dias.reduce((a, b) => a + b, 0) / c.dias.length
+        : 0;
+
+      return {
+        cidade: c.cidade,
+        uf: c.uf,
+        cityKey,
+
+        lat: geo.lat,
+        lon: geo.lon,
+
+        distanciaKm,
+        clientes: c.clientes.size,
+        vermelhos: c.vermelhos,
+        amarelos: c.amarelos,
+        verdes: c.verdes,
+        diasSemCompraMedio,
+        limiteTotal: c.limiteTotal,
+        score: 0,
+      };
+    })
+    .filter((c) => c.distanciaKm <= raioMaxKm);
+
+  if (!candidatasBase.length) return [];
+
+  const maxClientes = Math.max(...candidatasBase.map((c) => c.clientes), 1);
+  const maxCriticos = Math.max(
+    ...candidatasBase.map((c) => c.vermelhos * 2 + c.amarelos),
+    1
+  );
+  const maxDias = Math.max(
+    ...candidatasBase.map((c) => c.diasSemCompraMedio),
+    1
+  );
+  const maxLimite = Math.max(
+    ...candidatasBase.map((c) => c.limiteTotal),
+    1
+  );
+
+  // Mantém o score comercial já validado.
+  for (const c of candidatasBase) {
+    const proximidade = Math.max(0, 1 - c.distanciaKm / raioMaxKm);
+    const criticos = (c.vermelhos * 2 + c.amarelos) / maxCriticos;
+    const densidade = c.clientes / maxClientes;
+    const inatividade = c.diasSemCompraMedio / maxDias;
+    const financeiro = c.limiteTotal / maxLimite;
+
+    c.score =
+      proximidade * 0.35 +
+      criticos * 0.30 +
+      densidade * 0.15 +
+      inatividade * 0.10 +
+      financeiro * 0.10;
+  }
+
+  const limite = Math.max(1, limiteCidades);
+
+  // A cidade-base entra sempre que existir na carteira do representante.
+  // Ela não consome deslocamento e vira o ponto 1 da rota.
+  const cidadeBaseComercial = candidatasBase.find(
+    (c) => c.cityKey === baseKey
+  );
+
+  const pendentes = candidatasBase.filter(
+    (c) => c.cityKey !== baseKey
+  );
+
+  const selecionadas: typeof candidatasBase = [];
+
+  let latAtual = base.lat;
+  let lonAtual = base.lon;
+  let distanciaIdaKm = 0;
+
+  // Número de cidades adicionais à base.
+  const vagas = Math.max(
+    0,
+    limite - (cidadeBaseComercial ? 1 : 0)
+  );
+
+  /*
+   * Seleção incremental da rota:
+   *
+   * - benefício: score comercial já validado;
+   * - custo: quilômetros acrescentados ao circuito considerando o retorno
+   *   à cidade-base;
+   * - penalização adicional para saltos longos entre uma visita e outra.
+   *
+   * incrementoCircuito =
+   *   atual -> candidata + candidata -> base - atual -> base
+   *
+   * Assim uma cidade distante só entra se o ganho comercial compensar
+   * efetivamente o desvio que ela cria no percurso completo.
+   */
+  while (pendentes.length && selecionadas.length < vagas) {
+    let melhorIndice = -1;
+    let melhorValor = Number.NEGATIVE_INFINITY;
+    let melhorTrecho = 0;
+
+    const retornoAtual = distanciaHaversineKm(
+      latAtual,
+      lonAtual,
+      base.lat,
+      base.lon
+    );
+
+    for (let i = 0; i < pendentes.length; i++) {
+      const candidata = pendentes[i];
+      const geo = geoMap.get(candidata.cityKey);
+      if (!geo) continue;
+
+      const trecho = distanciaHaversineKm(
+        latAtual,
+        lonAtual,
+        geo.lat,
+        geo.lon
+      );
+
+      const retornoDepois = distanciaHaversineKm(
+        geo.lat,
+        geo.lon,
+        base.lat,
+        base.lon
+      );
+
+      const incrementoCircuito = Math.max(
+        0,
+        trecho + retornoDepois - retornoAtual
+      );
+
+      // Normaliza o custo pelo raio escolhido pelo usuário.
+      const custoNormalizado =
+        incrementoCircuito / Math.max(raioMaxKm, 1);
+
+      // Penalização progressiva para um trecho isolado muito longo.
+      // Até 35% do raio: sem punição extra.
+      const limiteTrechoConfortavel = raioMaxKm * 0.35;
+      const excessoTrecho = Math.max(
+        0,
+        trecho - limiteTrechoConfortavel
+      );
+      const penalizacaoSalto =
+        excessoTrecho / Math.max(raioMaxKm, 1);
+
+      // Quanto maior, melhor: oportunidade comercial menos custo logístico.
+      const valorRota =
+        candidata.score -
+        custoNormalizado * 0.55 -
+        penalizacaoSalto * 0.65;
+
+      if (
+        valorRota > melhorValor ||
+        (valorRota === melhorValor &&
+          trecho < melhorTrecho)
+      ) {
+        melhorValor = valorRota;
+        melhorIndice = i;
+        melhorTrecho = trecho;
+      }
+    }
+
+    if (melhorIndice < 0) break;
+
+    const [proxima] = pendentes.splice(melhorIndice, 1);
+    const geoProxima = geoMap.get(proxima.cityKey);
+    if (!geoProxima) continue;
+
+    selecionadas.push(proxima);
+    distanciaIdaKm += melhorTrecho;
+
+    latAtual = geoProxima.lat;
+    lonAtual = geoProxima.lon;
+  }
+
+  const ordenadas: CidadeRota[] = [];
+  let acumulada = 0;
+
+  if (cidadeBaseComercial) {
+    ordenadas.push({
+      ...cidadeBaseComercial,
+      sequencia: 1,
+      distanciaAnteriorKm: 0,
+      distanciaAcumuladaKm: 0,
+      distanciaIdaKm: 0,
+      distanciaRetornoKm: 0,
+      distanciaTotalKm: 0,
+      totalClientes: 0,
+      totalVermelhos: 0,
+      totalAmarelos: 0,
+      totalVerdes: 0,
+      limiteTotalRota: 0,
+    });
+  }
+
+  let latPercurso = base.lat;
+  let lonPercurso = base.lon;
+
+  for (const cidade of selecionadas) {
+    const geo = geoMap.get(cidade.cityKey);
+    if (!geo) continue;
+
+    const trecho = distanciaHaversineKm(
+      latPercurso,
+      lonPercurso,
+      geo.lat,
+      geo.lon
+    );
+
+    acumulada += trecho;
+
+    ordenadas.push({
+      ...cidade,
+      sequencia: ordenadas.length + 1,
+      distanciaAnteriorKm: trecho,
+      distanciaAcumuladaKm: acumulada,
+      distanciaIdaKm: 0,
+      distanciaRetornoKm: 0,
+      distanciaTotalKm: 0,
+      totalClientes: 0,
+      totalVermelhos: 0,
+      totalAmarelos: 0,
+      totalVerdes: 0,
+      limiteTotalRota: 0,
+    });
+
+    latPercurso = geo.lat;
+    lonPercurso = geo.lon;
+  }
+
+  if (!ordenadas.length) return [];
+
+  // Retorno da última cidade para a cidade-base.
+  const distanciaRetornoKm =
+    ordenadas.length > 1
+      ? distanciaHaversineKm(
+          latPercurso,
+          lonPercurso,
+          base.lat,
+          base.lon
+        )
+      : 0;
+
+  distanciaIdaKm = acumulada;
+  const distanciaTotalKm =
+    distanciaIdaKm + distanciaRetornoKm;
+
+  const totalClientes = ordenadas.reduce(
+    (s, c) => s + c.clientes,
+    0
+  );
+  const totalVermelhos = ordenadas.reduce(
+    (s, c) => s + c.vermelhos,
+    0
+  );
+  const totalAmarelos = ordenadas.reduce(
+    (s, c) => s + c.amarelos,
+    0
+  );
+  const totalVerdes = ordenadas.reduce(
+    (s, c) => s + c.verdes,
+    0
+  );
+  const limiteTotalRota = ordenadas.reduce(
+    (s, c) => s + c.limiteTotal,
+    0
+  );
+
+  // Mantemos CidadeRota[] para não quebrar a API existente.
+  // As métricas gerais são repetidas em cada item e poderão ser
+  // expostas pela API/tela no próximo passo.
+  for (const c of ordenadas) {
+    c.distanciaIdaKm = distanciaIdaKm;
+    c.distanciaRetornoKm = distanciaRetornoKm;
+    c.distanciaTotalKm = distanciaTotalKm;
+    c.totalClientes = totalClientes;
+    c.totalVermelhos = totalVermelhos;
+    c.totalAmarelos = totalAmarelos;
+    c.totalVerdes = totalVerdes;
+    c.limiteTotalRota = limiteTotalRota;
+  }
+
+  return ordenadas;
+}
+
 async function carregarVendas(): Promise<Venda[]> {
   const files = fs
     .readdirSync(DATA_DIR)
@@ -516,10 +1163,12 @@ export async function getData(): Promise<Cache> {
     cachePromise = (async () => {
       await prepararBasesGitHub();
 
-      const [carteira, vendas, fin] = await Promise.all([
+      const [carteira, vendas, fin, produtosAutorizados, municipios] = await Promise.all([
         carregarCarteiraBase(),
         carregarVendas(),
         carregarFinanceiro(),
+        carregarProdutosAutorizados(),
+        carregarMunicipios(),
       ]);
 
       const latest = new Map<
@@ -559,11 +1208,7 @@ export async function getData(): Promise<Cache> {
         }
       }
 
-      return {
-        carteira,
-        vendas,
-        loadedAt: Date.now(),
-      };
+      return { carteira, vendas, produtosAutorizados, municipios, loadedAt: Date.now() };
     })().catch((erro) => {
       // Permite nova tentativa na próxima chamada se algum download/leitura falhar.
       cachePromise = null;

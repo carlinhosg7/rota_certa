@@ -82,7 +82,7 @@ export default async function ClientePage({ params }: Props) {
           </p>
 
           <Link href="/dashboard" style={styles.voltar}>
-            ← Voltar para Rota Campeã
+            ← Voltar para Venda Mais+
           </Link>
         </div>
       </main>
@@ -327,7 +327,7 @@ export default async function ClientePage({ params }: Props) {
       porLinhaCliente.set(chave, atual);
 
       if (v.referencia) {
-        const p = potencialMap.get(chave) || {
+        const p: PotencialLinha = potencialMap.get(chave) || {
           chave, codigoLinha, linha, clientes: new Set<string>(),
           pares: [], valores: [], referencias: new Map(),
         };
@@ -342,7 +342,7 @@ export default async function ClientePage({ params }: Props) {
     }
 
     for (const [chave, l] of porLinhaCliente) {
-      const p = potencialMap.get(chave) || {
+      const p: PotencialLinha = potencialMap.get(chave) || {
         chave,
         codigoLinha: l.codigoLinha,
         linha: l.linha,
@@ -679,7 +679,7 @@ export default async function ClientePage({ params }: Props) {
           href="/dashboard"
           style={styles.voltar}
         >
-          ← Voltar para Rota Campeã
+          ← Voltar para Venda Mais+
         </Link>
 
         {/* CABEÇALHO */}

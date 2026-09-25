@@ -40,7 +40,7 @@ export async function GET(req: NextRequest) {
     // BASES
     // =========================================================
 
-    const { carteira, vendas, municipios } = await getData();
+    const { carteira, vendas, municipios, nomesReferencias } = await getData();
 
     const perfil = String(u.perfil || "").toUpperCase();
 
@@ -129,7 +129,7 @@ export async function GET(req: NextRequest) {
     // RESUMO DOS CLIENTES
     // =========================================================
 
-    const resumo = rep ? resumirClientes(cRep, vRep) : [];
+    const resumo = rep ? resumirClientes(cRep, vRep, nomesReferencias) : [];
 
     // =========================================================
     // CIDADES DA CARTEIRA
@@ -190,6 +190,17 @@ export async function GET(req: NextRequest) {
           .slice(0, 10),
         limite: x.limite,
         bloqueio: x.bloqueio,
+        temReposicao: x.temReposicao,
+        qtdReposicoes: x.qtdReposicoes,
+        temCampanhaReposicao: x.temCampanhaReposicao,
+        qtdReposicoesCampanha: x.qtdReposicoesCampanha,
+        reposicoes: x.reposicoes.slice(0, 20).map((r) => ({
+          referencia: r.referencia,
+          nome: r.nome,
+          ultimaCompra: r.ultimaCompra.toISOString().slice(0, 10),
+          diasSemCompra: r.diasSemCompra,
+          campanha: r.campanha,
+        })),
       }));
 
     // =========================================================
@@ -205,6 +216,7 @@ export async function GET(req: NextRequest) {
         cRep,
         vRep,
         municipios,
+        nomesReferencias,
         8,
         raio
       ).map((r, index) => ({
@@ -228,6 +240,10 @@ export async function GET(req: NextRequest) {
         vermelhos: r.vermelhos,
         amarelos: r.amarelos,
         verdes: r.verdes,
+        clientesReposicao: r.clientesReposicao,
+        referenciasReposicao: r.referenciasReposicao,
+        clientesCampanha: r.clientesCampanha,
+        referenciasCampanha: r.referenciasCampanha,
 
         diasSemCompraMedio:
           Math.round(r.diasSemCompraMedio),

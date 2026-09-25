@@ -15,6 +15,10 @@ export type CidadeMapa = {
   vermelhos: number;
   amarelos: number;
   verdes: number;
+  clientesReposicao: number;
+  referenciasReposicao: number;
+  clientesCampanha: number;
+  referenciasCampanha: number;
   score: number;
   distanciaAnteriorKm: number;
   distanciaAcumuladaKm: number;
@@ -131,6 +135,10 @@ export default function VendaMaisMap({
             🔴 ${cidade.vermelhos}
             &nbsp; 🟡 ${cidade.amarelos}
             &nbsp; 🟢 ${cidade.verdes}<br/>
+            🔄 <b>${cidade.clientesReposicao}</b> clientes de reposição
+            (${cidade.referenciasReposicao} refs.)<br/>
+            🎯 <b>${cidade.clientesCampanha}</b> clientes com campanha
+            (${cidade.referenciasCampanha} refs.)<br/>
             Score comercial:
             <b>${cidade.score.toFixed(3)}</b><br/>
             Trecho:

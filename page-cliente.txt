@@ -7,7 +7,6 @@ import ResultadoAtendimento from "@/components/ResultadoAtendimento";
 import {
   getData,
   cleanCode,
-  cleanReferencia,
   MAPA_SUPERVISORES,
 } from "@/lib/comercial-data";
 
@@ -60,7 +59,7 @@ export default async function ClientePage({ params }: Props) {
   // DADOS
   // ============================================================
 
-  const { carteira, vendas, produtosAutorizados, nomesReferencias } = await getData();
+  const { carteira, vendas, produtosAutorizados } = await getData();
 
   const codigoLimpo = cleanCode(codigo);
 
@@ -399,78 +398,16 @@ export default async function ClientePage({ params }: Props) {
 
 
   // ============================================================
-  // DICIONÁRIO OFICIAL: REFERÊNCIA -> NOME
-  // ============================================================
-
-  const nomeReferenciaPorRef = new Map(
-    nomesReferencias.map((p) => [cleanReferencia(p.referencia), p])
-  );
-
-  // ============================================================
-  // REPOSIÇÃO POR REFERÊNCIA - ÚLTIMA COMPRA ENTRE 91 E 180 DIAS
-  // ============================================================
-
-  const reposicoes = [...refMap.values()]
-    .map((r) => {
-      const refLimpa = cleanReferencia(r.referencia);
-      const cadastroNome = nomeReferenciaPorRef.get(refLimpa);
-      const dias = r.ultimaCompra
-        ? Math.max(0, Math.floor((hoje.getTime() - r.ultimaCompra.getTime()) / 86400000))
-        : null;
-
-      return {
-        ...r,
-        referenciaNormalizada: refLimpa,
-        nomeReferencia: cadastroNome?.nome || "",
-        diasSemCompra: dias,
-      };
-    })
-    .filter((r) =>
-      r.diasSemCompra !== null &&
-      r.diasSemCompra > 90 &&
-      r.diasSemCompra <= 180
-    )
-    .sort((a, b) => (b.diasSemCompra || 0) - (a.diasSemCompra || 0));
-
-  const normalizaNome = (valor: string) =>
-    valor
-      .normalize("NFD")
-      .replace(/[\u0300-\u036f]/g, "")
-      .toUpperCase();
-
-  const campanhasDaReferencia = (nome: string) => {
-    const n = normalizaNome(nome || "");
-    const campanhas: string[] = [];
-
-    if (n.includes("BRINCAFLEX") || (n.includes("BRINCA") && n.includes("FLEX")))
-      campanhas.push("Combo BrincaFlex");
-    if (n.includes("LUZ")) campanhas.push("Natal Kidy com Luzes");
-    if (n.includes("REBECCA")) campanhas.push("Rebecca Bonbon");
-    if (n.includes("IMPULSO")) campanhas.push("Impulso 2");
-    if (n.includes("KIDEX")) campanhas.push("Kidex - Dinheiro no Bolso");
-
-    return campanhas;
-  };
-
-  const reposicoesComCampanha = reposicoes.map((r) => ({
-    ...r,
-    campanhas: campanhasDaReferencia(r.nomeReferencia),
-  }));
-
-  const possuiReposicao = reposicoesComCampanha.length > 0;
-  const possuiCampanhaReposicao = reposicoesComCampanha.some((r) => r.campanhas.length > 0);
-
-  // ============================================================
   // REFERÊNCIAS AUTORIZADAS + PERFORMANCE RECENTE
   // ============================================================
 
   const refsAutorizadas = new Set(
-    produtosAutorizados.map((p) => cleanReferencia(p.referencia)).filter(Boolean)
+    produtosAutorizados.map((p) => cleanCode(p.referencia)).filter(Boolean)
   );
 
   const produtoPorRef = new Map<string, typeof produtosAutorizados>();
   for (const p of produtosAutorizados) {
-    const ref = cleanReferencia(p.referencia);
+    const ref = cleanCode(p.referencia);
     if (!ref) continue;
     const arr = produtoPorRef.get(ref) || [];
     arr.push(p);
@@ -490,7 +427,6 @@ export default async function ClientePage({ params }: Props) {
     valorRecente: number;
     ultimaVenda: Date | null;
     produtos: string[];
-    nome: string;
   };
 
   const referenciasAtuaisPorLinha = new Map<string, RefAtual[]>();
@@ -507,7 +443,7 @@ export default async function ClientePage({ params }: Props) {
     for (const s of grupoSimilar) {
       for (const v of s.vendas) {
         const chaveVenda = v.codigoLinha || v.linha;
-        const ref = cleanReferencia(v.referencia);
+        const ref = cleanCode(v.referencia);
 
         if (
           chaveVenda !== chaveLinha ||
@@ -553,7 +489,6 @@ export default async function ClientePage({ params }: Props) {
           valorRecente: a.valor,
           ultimaVenda: a.ultima,
           produtos,
-          nome: nomeReferenciaPorRef.get(cleanReferencia(referencia))?.nome || "",
         };
       })
       .sort(
@@ -583,32 +518,10 @@ export default async function ClientePage({ params }: Props) {
   // CAMPANHAS ATIVAS - REGRAS COMERCIAIS DO PDF DE SETEMBRO/2026
   // ============================================================
 
-  // A campanha de produto nasce SOMENTE das referências recomendadas.
-  // A referência exata consulta NOME_REFERENCIAS.xlsx; Codigo Linha não decide campanha.
-  const referenciasComNome = referenciasAutorizadasSugestao
-    .map((r) => ({
-      ...r,
-      referenciaNormalizada: cleanReferencia(r.referencia),
-      nomeClassificacao:
-        nomeReferenciaPorRef.get(cleanReferencia(r.referencia))?.nome || r.nome || "",
-    }))
-    .filter((r) => r.nomeClassificacao);
-
-  const refsPorNome = (teste: (nomeNormalizado: string) => boolean) =>
-    referenciasComNome.filter((r) => teste(
-      r.nomeClassificacao
-        .normalize("NFD")
-        .replace(/[\u0300-\u036f]/g, "")
-        .toUpperCase()
-    ));
-
-  const refsBrincaFlex = refsPorNome((n) =>
-    n.includes("BRINCAFLEX") || (n.includes("BRINCA") && n.includes("FLEX"))
-  );
-  const refsLuzes = refsPorNome((n) => n.includes("LUZ"));
-  const refsRebecca = refsPorNome((n) => n.includes("REBECCA"));
-  const refsImpulso = refsPorNome((n) => n.includes("IMPULSO"));
-  const refsKidex = refsPorNome((n) => n.includes("KIDEX"));
+  const textoLinhas = [
+    ...linhasCliente,
+    ...produtosPotenciais.map((p) => p.linha),
+  ].join(" ").toUpperCase();
 
   const valorPedidoReferencia =
     principalPotencial?.valorMediano || valorHistorico;
@@ -618,70 +531,65 @@ export default async function ClientePage({ params }: Props) {
     motivo: string;
     mecanica: string;
     prioridade: "ALTA" | "MÉDIA";
-    referencias?: string[];
   }[] = [];
 
-  if (refsBrincaFlex.length) {
+  if (textoLinhas.includes("BRINCAFLEX")) {
     campanhasAplicaveis.push({
       nome: "Combo BrincaFlex",
-      motivo: "Há referência recomendada classificada como BrincaFlex na base oficial de nomes.",
+      motivo: "Há aderência da linha BrincaFlex no perfil comercial analisado.",
       mecanica: "Ativação: 24 pares de sandália + 24 pares de tênis. Reposição: 24 pares de sandália + 12 pares de tênis.",
       prioridade: "ALTA",
-      referencias: refsBrincaFlex.map((r) => `${r.referencia} - ${r.nomeClassificacao}`),
     });
   }
 
-  if (refsLuzes.length) {
+  if (textoLinhas.includes("LUZ")) {
     campanhasAplicaveis.push({
       nome: "Natal Kidy com Luzes",
-      motivo: "Há referência recomendada classificada como Luzes na base oficial de nomes.",
+      motivo: "Linha de Luzes aparece no histórico ou nas oportunidades do cliente.",
       mecanica: "A cada 48 pares de produtos da linha Luzes, o cliente ganha 10 bags personalizadas Kidy.",
       prioridade: "ALTA",
-      referencias: refsLuzes.map((r) => `${r.referencia} - ${r.nomeClassificacao}`),
     });
 
-    if (!ultimaCompra || ultimaCompra <= new Date(2026, 3, 30)) {
+    if (
+      !ultimaCompra ||
+      ultimaCompra <= new Date(2026, 3, 30)
+    ) {
       campanhasAplicaveis.push({
         nome: "Reconquista 2.0",
-        motivo: "Cliente atende ao corte de recompra e possui referência recomendada classificada como Luzes.",
+        motivo: "Cliente sem compra após o corte informado na campanha e com oportunidade de linha de Luz.",
         mecanica: "Regra do material: não ter comprado a coleção Primavera Verão (último pedido 30/04/2026) e ter 1 linha de Luz no pedido.",
         prioridade: "ALTA",
-        referencias: refsLuzes.map((r) => `${r.referencia} - ${r.nomeClassificacao}`),
       });
     }
   }
 
-  if (refsRebecca.length) {
+  if (textoLinhas.includes("REBECCA")) {
     campanhasAplicaveis.push({
       nome: "Rebecca Bonbon",
-      motivo: "Há referência recomendada classificada como Rebecca na base oficial de nomes.",
+      motivo: "Rebecca Bonbon aparece no mix/oportunidade do cliente.",
       mecanica: "Na compra de 36 pares, o material informa benefício de exposição/testeira Rebecca Bonbon; solicitar na observação do pedido.",
       prioridade: "MÉDIA",
-      referencias: refsRebecca.map((r) => `${r.referencia} - ${r.nomeClassificacao}`),
     });
   }
 
-  if (refsImpulso.length) {
+  if (textoLinhas.includes("IMPULSO") || textoLinhas.includes("K360")) {
     campanhasAplicaveis.push({
       nome: "Impulso 2",
-      motivo: "Há referência recomendada classificada como Impulso na base oficial de nomes.",
+      motivo: "Oportunidade relacionada a Impulso/K360.",
       mecanica: "Pedido de K360 com mínimo de 12 pares de Impulso: 60 pares de K360 = 4 camisetas; 84 pares = 6 camisetas. Informar quantidades e tamanhos na observação.",
       prioridade: "ALTA",
-      referencias: refsImpulso.map((r) => `${r.referencia} - ${r.nomeClassificacao}`),
     });
   }
 
-  if (refsKidex.length) {
+  if (textoLinhas.includes("KIDEX")) {
     campanhasAplicaveis.push({
       nome: "Kidex - Dinheiro no Bolso",
-      motivo: "Há referência recomendada classificada como Kidex na base oficial de nomes.",
+      motivo: "Kidex aparece no histórico ou nas oportunidades comerciais.",
       mecanica: "Campanha de incentivo ao representante com apuração e premiação mensal entre setembro e dezembro.",
       prioridade: "MÉDIA",
-      referencias: refsKidex.map((r) => `${r.referencia} - ${r.nomeClassificacao}`),
     });
   }
 
-  // Campanha financeira continua independente de produto/referência.
   if (valorPedidoReferencia >= 10000 || valorHistorico >= 10000) {
     campanhasAplicaveis.push({
       nome: "Rifa Balconista Campeão",
@@ -791,29 +699,15 @@ export default async function ClientePage({ params }: Props) {
             </div>
           </div>
 
-          <div style={styles.statusGrupo}>
-            <div
-              style={{
-                ...styles.status,
-                color: statusCor,
-                background: statusFundo,
-              }}
-            >
-              <span>{statusIcone}</span>
-              {status}
-            </div>
-
-            {possuiReposicao && (
-              <div style={{ ...styles.status, ...styles.statusReposicao }}>
-                <span>↻</span> REPOSIÇÃO
-              </div>
-            )}
-
-            {possuiCampanhaReposicao && (
-              <div style={{ ...styles.status, ...styles.statusCampanha }}>
-                <span>★</span> CAMPANHA
-              </div>
-            )}
+          <div
+            style={{
+              ...styles.status,
+              color: statusCor,
+              background: statusFundo,
+            }}
+          >
+            <span>{statusIcone}</span>
+            {status}
           </div>
         </section>
 
@@ -893,69 +787,6 @@ export default async function ClientePage({ params }: Props) {
           />
 
         </section>
-
-        {possuiReposicao && (
-          <section style={{ ...styles.bloco, ...styles.blocoReposicao }}>
-            <div style={styles.blocoTitulo}>
-              <span style={{ ...styles.numeroSecao, ...styles.numeroReposicao }}>↻</span>
-              Reposição recomendada
-              <span style={styles.contadorReposicao}>
-                {reposicoesComCampanha.length} referência{reposicoesComCampanha.length === 1 ? "" : "s"}
-              </span>
-            </div>
-
-            <div style={styles.reposicaoResumo}>
-              Referências que este cliente já comprou e cuja última compra ocorreu entre 91 e 180 dias atrás.
-              {possuiCampanhaReposicao && (
-                <> As referências com campanha ativa estão sinalizadas para apoiar a abordagem comercial.</>
-              )}
-            </div>
-
-            <div style={styles.tableWrap}>
-              <table style={styles.tabela}>
-                <thead>
-                  <tr>
-                    <th style={styles.th}>Referência</th>
-                    <th style={styles.th}>Produto</th>
-                    <th style={styles.th}>Linha</th>
-                    <th style={styles.thRight}>Última compra</th>
-                    <th style={styles.thRight}>Dias</th>
-                    <th style={styles.th}>Campanha</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {reposicoesComCampanha.slice(0, 20).map((r) => (
-                    <tr key={`reposicao-${r.referencia}-${r.codigoLinha}`}>
-                      <td style={styles.td}>
-                        <strong>{r.referencia}</strong>
-                        <div style={styles.badgeReposicaoInline}>↻ REPOSIÇÃO</div>
-                      </td>
-                      <td style={styles.td}>
-                        <strong>{r.nomeReferencia || "Nome não localizado"}</strong>
-                      </td>
-                      <td style={styles.td}>{r.linha}</td>
-                      <td style={styles.tdRight}>{dataBR(r.ultimaCompra)}</td>
-                      <td style={styles.tdRight}>
-                        <strong>{numero(r.diasSemCompra || 0)}</strong>
-                      </td>
-                      <td style={styles.td}>
-                        {r.campanhas.length ? (
-                          <div style={styles.campanhasReposicao}>
-                            {r.campanhas.map((campanha) => (
-                              <span key={campanha} style={styles.badgeCampanhaInline}>★ {campanha}</span>
-                            ))}
-                          </div>
-                        ) : (
-                          <span style={styles.semCampanha}>—</span>
-                        )}
-                      </td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
-            </div>
-          </section>
-        )}
 
         {/* HISTÓRICO */}
 
@@ -1157,7 +988,6 @@ export default async function ClientePage({ params }: Props) {
                   <div key={r.referencia} style={styles.refAutorizada}>
                     <div>
                       <strong>{r.referencia}</strong>
-                      {r.nome && <span>{r.nome}</span>}
                       <span>{r.linha}</span>
                       {r.produtos[0] && <small>{r.produtos[0]}</small>}
                     </div>
@@ -1189,13 +1019,6 @@ export default async function ClientePage({ params }: Props) {
                       </span>
                     </div>
                     <p>{c.motivo}</p>
-                    {c.referencias?.length ? (
-                      <div style={{ margin: "6px 0", fontSize: 11, fontWeight: 700 }}>
-                        {c.referencias.slice(0, 4).map((ref) => (
-                          <div key={ref}>• {ref}</div>
-                        ))}
-                      </div>
-                    ) : null}
                     <small>{c.mecanica}</small>
                   </div>
                 ))
@@ -1478,24 +1301,6 @@ const styles: Record<string, React.CSSProperties> = {
     gap: "7px",
     alignItems: "center",
   },
-
-  statusGrupo: {
-    display: "flex",
-    flexWrap: "wrap",
-    justifyContent: "flex-end",
-    gap: "8px",
-  },
-
-  statusReposicao: { color: "#9a5700", background: "#fff0c2" },
-  statusCampanha: { color: "#7a3e00", background: "#ffe0a3" },
-  blocoReposicao: { border: "2px solid #f2a43b", background: "#fffaf0" },
-  numeroReposicao: { color: "#4c2a00", fontSize: "16px" },
-  contadorReposicao: { marginLeft: "auto", fontSize: "11px", color: "#a15c18", fontWeight: 800 },
-  reposicaoResumo: { marginBottom: "16px", padding: "12px 14px", borderRadius: "12px", background: "#fff1d8", color: "#805328", fontSize: "12px", lineHeight: 1.5 },
-  badgeReposicaoInline: { display: "inline-block", marginTop: "5px", padding: "3px 7px", borderRadius: "999px", background: "#fff0c2", color: "#9a5700", fontSize: "8px", fontWeight: 900 },
-  campanhasReposicao: { display: "flex", flexWrap: "wrap", gap: "5px" },
-  badgeCampanhaInline: { display: "inline-block", padding: "4px 7px", borderRadius: "999px", background: "#dff5eb", color: "#0d7652", fontSize: "9px", fontWeight: 900, whiteSpace: "nowrap" },
-  semCampanha: { color: "#b49777" },
 
   bloco: {
     background: "#fffdf9",

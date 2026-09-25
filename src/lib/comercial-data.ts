@@ -21,6 +21,12 @@ export function cleanCode(v: any) {
   return s.replace(/\.0+$/, "");
 }
 
+export function cleanReferencia(v: any) {
+  const s = cleanCode(v);
+  if (!s) return "";
+  return /^\d+$/.test(s) && s.length <= 7 ? s.padStart(7, "0") : s;
+}
+
 export function norm(v: any) {
   return String(v ?? "")
     .normalize("NFD")
@@ -77,6 +83,14 @@ export type Venda = {
   prazoMedio: number;
 };
 
+export type ReposicaoReferencia = {
+  referencia: string;
+  nome: string;
+  ultimaCompra: Date;
+  diasSemCompra: number;
+  campanha: string | null;
+};
+
 type ClienteResumo = Carteira & {
   ultimaCompra: Date | null;
   qtdAno: number;
@@ -85,6 +99,11 @@ type ClienteResumo = Carteira & {
   diasSemCompra: number;
   status: string;
   prioridade: number;
+  reposicoes: ReposicaoReferencia[];
+  qtdReposicoes: number;
+  qtdReposicoesCampanha: number;
+  temReposicao: boolean;
+  temCampanhaReposicao: boolean;
 };
 
 export type ProdutoAutorizado = {
@@ -93,6 +112,13 @@ export type ProdutoAutorizado = {
   referencia: string;
   produto: string;
   qtdVenda: number;
+};
+
+export type NomeReferencia = {
+  codigoLinha: string;
+  linha: string;
+  referencia: string;
+  nome: string;
 };
 
 
@@ -125,6 +151,10 @@ export type CidadeRota = {
   vermelhos: number;
   amarelos: number;
   verdes: number;
+  clientesReposicao: number;
+  referenciasReposicao: number;
+  clientesCampanha: number;
+  referenciasCampanha: number;
   diasSemCompraMedio: number;
   limiteTotal: number;
   score: number;
@@ -145,6 +175,7 @@ type Cache = {
   carteira: Carteira[];
   vendas: Venda[];
   produtosAutorizados: ProdutoAutorizado[];
+  nomesReferencias: NomeReferencia[];
   municipios: MunicipioGeo[];
   loadedAt: number;
 };
@@ -524,7 +555,7 @@ async function carregarProdutosAutorizados(): Promise<ProdutoAutorizado[]> {
 
     const codigoLinha = cleanCode(get(r, ["Codigo Linha"]));
     const linha = String(get(r, ["Linha"]) ?? "").trim();
-    const referencia = cleanCode(get(r, ["Referencia"]));
+    const referencia = cleanReferencia(get(r, ["Referencia"]));
     const produto = String(get(r, ["Produto"]) ?? "").trim();
     const qtdVenda = number(get(r, ["Qtd Venda"]));
 
@@ -551,6 +582,78 @@ async function carregarProdutosAutorizados(): Promise<ProdutoAutorizado[]> {
     `[PRODUTOS] ${out.length.toLocaleString("pt-BR")} produtos autorizados carregados.`
   );
 
+  return out;
+}
+
+
+/**
+ * NOME DAS REFERÊNCIAS:
+ * Dicionário comercial por REFERÊNCIA exata.
+ * A referência é a chave; Codigo Linha e Linha são apenas atributos.
+ */
+async function carregarNomesReferencias(): Promise<NomeReferencia[]> {
+  const nomeArquivo = "NOME_REFERENCIAS.xlsx";
+  const url = githubUrl(nomeArquivo);
+
+  console.log(`[NOME REFERENCIAS] Baixando ${nomeArquivo} diretamente do GitHub...`);
+
+  const response = await fetch(url, { cache: "no-store" });
+
+  if (!response.ok) {
+    throw new Error(
+      `Erro ao baixar ${nomeArquivo} do GitHub: HTTP ${response.status} - ${url}`
+    );
+  }
+
+  const buffer = Buffer.from(await response.arrayBuffer());
+  if (!buffer.length) throw new Error(`${nomeArquivo} foi baixado, mas está vazio.`);
+
+  const wb = XLSX.read(buffer, { type: "buffer", cellDates: true });
+  let rows: any[][] = [];
+
+  for (const sn of wb.SheetNames) {
+    const a = XLSX.utils.sheet_to_json<any[]>(wb.Sheets[sn], {
+      header: 1,
+      defval: null,
+      raw: true,
+    });
+
+    const h = findHeader(a, ["Referencia", "Nome"]);
+    if (h >= 0) {
+      rows = a.slice(h);
+      break;
+    }
+  }
+
+  if (!rows.length) {
+    throw new Error(
+      `Não localizei as colunas Referencia e Nome em ${nomeArquivo}.`
+    );
+  }
+
+  const headers = rows[0].map((x) => String(x ?? ""));
+  const porReferencia = new Map<string, NomeReferencia>();
+
+  for (const arr of rows.slice(1)) {
+    const r = Object.fromEntries(
+      headers.map((h, i) => [h, arr[i]])
+    ) as Record<string, any>;
+
+    const referencia = cleanReferencia(get(r, ["Referencia"]));
+    if (!referencia) continue;
+
+    porReferencia.set(referencia, {
+      codigoLinha: cleanCode(get(r, ["Codigo Linha"])),
+      linha: String(get(r, ["Linha"]) ?? "").trim(),
+      referencia,
+      nome: String(get(r, ["Nome"]) ?? "").trim(),
+    });
+  }
+
+  const out = [...porReferencia.values()];
+  console.log(
+    `[NOME REFERENCIAS] ${out.length.toLocaleString("pt-BR")} referências classificadas.`
+  );
   return out;
 }
 
@@ -687,6 +790,7 @@ export function sugerirRota(
   carteira: Carteira[],
   vendas: Venda[],
   municipios: MunicipioGeo[],
+  nomesReferencias: NomeReferencia[] = [],
   limiteCidades = 8,
   raioMaxKm = 250
 ): CidadeRota[] {
@@ -711,7 +815,7 @@ export function sugerirRota(
   // A Venda Mais+ usa exatamente o mesmo universo de clientes da tabela.
   // Assim, a quantidade exibida no cartão da cidade sempre corresponde
   // aos clientes que poderão ser exibidos ao clicar nessa cidade.
-  const resumo = resumirClientes(carteiraRep, vendas);
+  const resumo = resumirClientes(carteiraRep, vendas, nomesReferencias);
 
   const porCidade = new Map<
     string,
@@ -722,6 +826,10 @@ export function sugerirRota(
       vermelhos: number;
       amarelos: number;
       verdes: number;
+      clientesReposicao: number;
+      referenciasReposicao: number;
+      clientesCampanha: number;
+      referenciasCampanha: number;
       dias: number[];
       limiteTotal: number;
     }
@@ -740,6 +848,10 @@ export function sugerirRota(
       vermelhos: 0,
       amarelos: 0,
       verdes: 0,
+      clientesReposicao: 0,
+      referenciasReposicao: 0,
+      clientesCampanha: 0,
+      referenciasCampanha: 0,
       dias: [],
       limiteTotal: 0,
     };
@@ -751,6 +863,11 @@ export function sugerirRota(
       if (r.status.startsWith("🔴")) atual.vermelhos += 1;
       else if (r.status.startsWith("🟡")) atual.amarelos += 1;
       else if (r.status.startsWith("🟢")) atual.verdes += 1;
+
+      if (r.temReposicao) atual.clientesReposicao += 1;
+      atual.referenciasReposicao += r.qtdReposicoes;
+      if (r.temCampanhaReposicao) atual.clientesCampanha += 1;
+      atual.referenciasCampanha += r.qtdReposicoesCampanha;
 
       if (Number.isFinite(r.diasSemCompra)) {
         atual.dias.push(r.diasSemCompra);
@@ -787,6 +904,10 @@ export function sugerirRota(
         vermelhos: c.vermelhos,
         amarelos: c.amarelos,
         verdes: c.verdes,
+        clientesReposicao: c.clientesReposicao,
+        referenciasReposicao: c.referenciasReposicao,
+        clientesCampanha: c.clientesCampanha,
+        referenciasCampanha: c.referenciasCampanha,
         diasSemCompraMedio,
         limiteTotal: c.limiteTotal,
         score: 0,
@@ -809,21 +930,28 @@ export function sugerirRota(
     ...candidatasBase.map((c) => c.limiteTotal),
     1
   );
+  const maxReposicoes = Math.max(
+    ...candidatasBase.map((c) => c.referenciasReposicao + c.referenciasCampanha),
+    1
+  );
 
-  // Mantém o score comercial já validado.
+  // Mantém os critérios comerciais existentes e acrescenta oportunidade de reposição.
   for (const c of candidatasBase) {
     const proximidade = Math.max(0, 1 - c.distanciaKm / raioMaxKm);
     const criticos = (c.vermelhos * 2 + c.amarelos) / maxCriticos;
     const densidade = c.clientes / maxClientes;
     const inatividade = c.diasSemCompraMedio / maxDias;
     const financeiro = c.limiteTotal / maxLimite;
+    const reposicao =
+      (c.referenciasReposicao + c.referenciasCampanha) / maxReposicoes;
 
     c.score =
-      proximidade * 0.35 +
-      criticos * 0.30 +
+      proximidade * 0.30 +
+      criticos * 0.25 +
       densidade * 0.15 +
       inatividade * 0.10 +
-      financeiro * 0.10;
+      financeiro * 0.10 +
+      reposicao * 0.10;
   }
 
   const limite = Math.max(1, limiteCidades);
@@ -1138,7 +1266,7 @@ async function carregarVendas(): Promise<Venda[]> {
           vlr: number(r["Vlr Venda"]),
           codigoLinha: cleanCode(r["Codigo Linha"]),
           linha: String(r["Linha"] ?? "").trim(),
-          referencia: cleanCode(r["Referencia"]),
+          referencia: cleanReferencia(r["Referencia"]),
           numeroPedido: cleanCode(r["Numero Pedido"]),
           tipoPedido: String(r["Tipo Pedido"] ?? "").trim(),
           prazoMedio: number(r["Prazo Medio"]),
@@ -1163,11 +1291,12 @@ export async function getData(): Promise<Cache> {
     cachePromise = (async () => {
       await prepararBasesGitHub();
 
-      const [carteira, vendas, fin, produtosAutorizados, municipios] = await Promise.all([
+      const [carteira, vendas, fin, produtosAutorizados, nomesReferencias, municipios] = await Promise.all([
         carregarCarteiraBase(),
         carregarVendas(),
         carregarFinanceiro(),
         carregarProdutosAutorizados(),
+        carregarNomesReferencias(),
         carregarMunicipios(),
       ]);
 
@@ -1208,7 +1337,7 @@ export async function getData(): Promise<Cache> {
         }
       }
 
-      return { carteira, vendas, produtosAutorizados, municipios, loadedAt: Date.now() };
+      return { carteira, vendas, produtosAutorizados, nomesReferencias, municipios, loadedAt: Date.now() };
     })().catch((erro) => {
       // Permite nova tentativa na próxima chamada se algum download/leitura falhar.
       cachePromise = null;
@@ -1219,113 +1348,109 @@ export async function getData(): Promise<Cache> {
   return cachePromise;
 }
 
+export function campanhaPorNomeReferencia(nome: string): string | null {
+  const n = norm(nome);
+  if (!n) return null;
+
+  // Campanhas ligadas diretamente ao produto/referência.
+  // A decisão nasce do NOME obtido por REFERÊNCIA exata em NOME_REFERENCIAS.xlsx.
+  if (n.includes("IMPULSO") || n.includes("K360")) return "Impulso 2";
+  if (n.includes("LUZ")) return "Natal Kidy com Luzes";
+  if (n.includes("REBECCA")) return "Rebecca Bonbon";
+  if (n.includes("KIDEX")) return "Kidex - Dinheiro no Bolso";
+
+  return null;
+}
+
 export function resumirClientes(
   carteira: Carteira[],
-  vendas: Venda[]
+  vendas: Venda[],
+  nomesReferencias: NomeReferencia[] = []
 ): ClienteResumo[] {
   const now = new Date();
-
-  const hoje = new Date(
-    now.getFullYear(),
-    now.getMonth(),
-    now.getDate()
-  );
-
-  const anoIni = new Date(
-    hoje.getFullYear(),
-    0,
-    1
-  );
-
-  const maioIni = new Date(
-    hoje.getFullYear(),
-    4,
-    1
-  );
-
+  const hoje = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+  const anoIni = new Date(hoje.getFullYear(), 0, 1);
+  const maioIni = new Date(hoje.getFullYear(), 4, 1);
   const corte = new Date(2022, 0, 1);
+
+  const nomePorReferencia = new Map(
+    nomesReferencias.map((x) => [cleanReferencia(x.referencia), x])
+  );
 
   const agg = new Map<
     string,
-    {
-      ultima: Date | null;
-      qAno: number;
-      qMaio: number;
-      vlr: number;
-    }
+    { ultima: Date | null; qAno: number; qMaio: number; vlr: number }
   >();
 
+  // Última compra na granularidade CLIENTE + REFERÊNCIA.
+  const ultimaPorClienteReferencia = new Map<string, Date>();
+
   for (const v of vendas) {
-    const a = agg.get(v.codigo) || {
-      ultima: null,
-      qAno: 0,
-      qMaio: 0,
-      vlr: 0,
-    };
+    const a = agg.get(v.codigo) || { ultima: null, qAno: 0, qMaio: 0, vlr: 0 };
 
-    if (
-      v.data &&
-      (!a.ultima || v.data > a.ultima)
-    ) {
-      a.ultima = v.data;
-    }
-
-    if (
-      v.data &&
-      v.data >= anoIni &&
-      v.data <= hoje
-    ) {
-      a.qAno += v.qtd;
-    }
-
-    if (
-      v.data &&
-      v.data >= maioIni &&
-      v.data <= hoje
-    ) {
-      a.qMaio += v.qtd;
-    }
-
+    if (v.data && (!a.ultima || v.data > a.ultima)) a.ultima = v.data;
+    if (v.data && v.data >= anoIni && v.data <= hoje) a.qAno += v.qtd;
+    if (v.data && v.data >= maioIni && v.data <= hoje) a.qMaio += v.qtd;
     a.vlr += v.vlr;
-
     agg.set(v.codigo, a);
+
+    const referencia = cleanReferencia(v.referencia);
+    if (v.data && referencia) {
+      const chave = `${v.codigo}|${referencia}`;
+      const anterior = ultimaPorClienteReferencia.get(chave);
+      if (!anterior || v.data > anterior) {
+        ultimaPorClienteReferencia.set(chave, v.data);
+      }
+    }
+  }
+
+  const reposicoesPorCliente = new Map<string, ReposicaoReferencia[]>();
+
+  for (const [chave, ultimaCompra] of ultimaPorClienteReferencia) {
+    const separador = chave.indexOf("|");
+    const codigo = chave.slice(0, separador);
+    const referencia = chave.slice(separador + 1);
+    const diasSemCompra = Math.floor(
+      (hoje.getTime() - ultimaCompra.getTime()) / 86400000
+    );
+
+    // Reposição comercial: somente referências cuja última compra esteja
+    // entre 91 e 180 dias atrás. Até 90 dias ainda não é reposição;
+    // acima de 180 dias sai da janela de reposição.
+    if (diasSemCompra <= 90 || diasSemCompra > 180 || ultimaCompra > hoje) continue;
+
+    const cadastro = nomePorReferencia.get(referencia);
+    const nome = cadastro?.nome?.trim() || cadastro?.linha?.trim() || "";
+    const campanha = campanhaPorNomeReferencia(nome);
+
+    const lista = reposicoesPorCliente.get(codigo) || [];
+    lista.push({ referencia, nome, ultimaCompra, diasSemCompra, campanha });
+    reposicoesPorCliente.set(codigo, lista);
+  }
+
+  for (const lista of reposicoesPorCliente.values()) {
+    lista.sort((a, b) => b.diasSemCompra - a.diasSemCompra);
   }
 
   const uniq = new Map<string, Carteira>();
-
-  carteira.forEach((c) => {
-    uniq.set(c.codigo, c);
-  });
+  carteira.forEach((c) => uniq.set(c.codigo, c));
 
   const out: ClienteResumo[] = [];
 
   for (const c of uniq.values()) {
-    const a = agg.get(c.codigo) || {
-      ultima: null,
-      qAno: 0,
-      qMaio: 0,
-      vlr: 0,
-    };
+    const a = agg.get(c.codigo) || { ultima: null, qAno: 0, qMaio: 0, vlr: 0 };
+    if (!a.ultima || a.ultima < corte || a.ultima > hoje) continue;
 
-    if (
-      !a.ultima ||
-      a.ultima < corte ||
-      a.ultima > hoje
-    ) {
-      continue;
-    }
-
-    const dias = Math.floor(
-      (hoje.getTime() - a.ultima.getTime()) /
-        86400000
-    );
-
+    const dias = Math.floor((hoje.getTime() - a.ultima.getTime()) / 86400000);
     const status =
       a.qAno <= 0
         ? "🔴 NÃO POSITIVADO NO ANO"
         : a.qMaio <= 0
         ? "🟡 SEM COMPRA DESDE MAIO"
         : "🟢 ATIVO DESDE MAIO";
+
+    const reposicoes = reposicoesPorCliente.get(c.codigo) || [];
+    const qtdReposicoesCampanha = reposicoes.filter((x) => !!x.campanha).length;
 
     out.push({
       ...c,
@@ -1335,11 +1460,15 @@ export function resumirClientes(
       vlrHistorico: a.vlr,
       diasSemCompra: dias,
       status,
-      prioridade: status.startsWith("🔴")
-        ? 3
-        : status.startsWith("🟡")
-        ? 2
-        : 1,
+      prioridade:
+        (status.startsWith("🔴") ? 30 : status.startsWith("🟡") ? 20 : 10) +
+        (reposicoes.length ? 2 : 0) +
+        (qtdReposicoesCampanha ? 1 : 0),
+      reposicoes,
+      qtdReposicoes: reposicoes.length,
+      qtdReposicoesCampanha,
+      temReposicao: reposicoes.length > 0,
+      temCampanhaReposicao: qtdReposicoesCampanha > 0,
     });
   }
 

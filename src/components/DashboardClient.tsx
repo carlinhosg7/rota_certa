@@ -17,6 +17,17 @@ type Cliente = {
   ultimaCompra: string;
   limite: number;
   bloqueio: string;
+  temReposicao: boolean;
+  qtdReposicoes: number;
+  temCampanhaReposicao: boolean;
+  qtdReposicoesCampanha: number;
+  reposicoes: Array<{
+    referencia: string;
+    nome: string;
+    ultimaCompra: string;
+    diasSemCompra: number;
+    campanha: string | null;
+  }>;
 };
 
 type Rota = {
@@ -33,6 +44,10 @@ type Rota = {
   vermelhos: number;
   amarelos: number;
   verdes: number;
+  clientesReposicao: number;
+  referenciasReposicao: number;
+  clientesCampanha: number;
+  referenciasCampanha: number;
   diasSemCompraMedio: number;
   limiteTotal: number;
   score: number;
@@ -438,6 +453,8 @@ export default function DashboardClient() {
                   <span style={{ fontSize: 12 }}>
                     {r.clientes} clientes • 🔴 {r.vermelhos} • 🟡{" "}
                     {r.amarelos} • 🟢 {r.verdes}
+                    <br />
+                    🔄 {r.clientesReposicao} reposição • 🎯 {r.clientesCampanha} campanha
                   </span>
                 </button>
               </div>
@@ -491,6 +508,7 @@ export default function DashboardClient() {
                   <th>Razão Social</th>
                   <th>Cidade</th>
                   <th>Status</th>
+                  <th>Oportunidade</th>
                   <th>Dias sem compra</th>
                   <th>Última compra</th>
                   <th>Limite</th>
@@ -533,6 +551,16 @@ export default function DashboardClient() {
                       {c.cidade} - {c.uf}
                     </td>
                     <td className={s.status}>{c.status}</td>
+                    <td>
+                      {c.temReposicao ? (
+                        <span title={c.reposicoes.map((r) => `${r.referencia} - ${r.nome || "Produto"}: ${r.diasSemCompra} dias${r.campanha ? ` - ${r.campanha}` : ""}`).join("\n")}>
+                          🔄 {c.qtdReposicoes} refs.
+                          {c.temCampanhaReposicao ? ` • 🎯 ${c.qtdReposicoesCampanha}` : ""}
+                        </span>
+                      ) : (
+                        "—"
+                      )}
+                    </td>
                     <td>{c.diasSemCompra}</td>
                     <td>
                       {c.ultimaCompra

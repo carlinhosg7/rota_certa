@@ -3,7 +3,26 @@
 import { useEffect, useMemo, useState } from "react";
 import { useRouter } from "next/navigation";
 import s from "./DashboardClient.module.css";
-import VendaMaisMap from "@/components/VendaMaisMap";
+import dynamic from "next/dynamic";
+
+const VendaMaisMap = dynamic(
+  () => import("@/components/VendaMaisMap"),
+  {
+    ssr: false,
+    loading: () => (
+      <div style={{
+        height: 420,
+        display: "flex",
+        alignItems: "center",
+        justifyContent: "center",
+        background: "#f8fafc",
+        borderRadius: 12
+      }}>
+        Carregando mapa...
+      </div>
+    )
+  }
+);
 
 type Sup = { codigo: string; nome: string; label: string };
 
@@ -195,14 +214,60 @@ export default function DashboardClient() {
     }, 50);
   }
 
+  const [abrindoCliente, setAbrindoCliente] = useState(false);
+
   async function abrirCliente(codigo: string) {
-    await registrarEvento("ABRIU_CLIENTE");
+    if (abrindoCliente) return;
+
+    setAbrindoCliente(true);
+    void registrarEvento("ABRIU_CLIENTE");
+    await new Promise<void>((resolve) => setTimeout(resolve, 150));
     router.push(`/cliente/${encodeURIComponent(codigo)}`);
   }
 
   return (
     <>
-      <section id="planejamento" className="panel">
+      {abrindoCliente && (
+  <div
+    role="status"
+    aria-live="polite"
+    style={{
+      position: "fixed",
+      inset: 0,
+      zIndex: 99999,
+      background: "rgba(255,250,243,0.96)",
+      display: "flex",
+      alignItems: "center",
+      justifyContent: "center",
+      flexDirection: "column",
+      gap: 18,
+      padding: 20,
+      textAlign: "center"
+    }}
+  >
+    <div style={{
+      width: 72,
+      height: 72,
+      border: "7px solid #ffe1b2",
+      borderTopColor: "#f28c00",
+      borderRadius: "50%",
+      animation: "kidyClienteSpin 0.8s linear infinite"
+    }} />
+
+    <strong style={{ fontSize: 20, color: "#b76300" }}>
+      Abrindo análise do cliente...
+    </strong>
+
+    <span style={{ fontSize: 13, color: "#8b5a2b" }}>
+      Preparando histórico, indicadores e informações comerciais
+    </span>
+
+    <style>{`@keyframes kidyClienteSpin {
+      to { transform: rotate(360deg); }
+    }`}</style>
+  </div>
+)}
+<section id="planejamento" className="panel">
         <div className="panel-title">
           <div>
             <span>01</span>
@@ -266,7 +331,23 @@ export default function DashboardClient() {
       {erro && <div className={s.error}>{erro}</div>}
 
       {loading && (
-        <div className={s.loading}>Carregando bases comerciais...</div>
+        <div className={s.loading} role="status" style={{display:"flex",alignItems:"center",gap:16,padding:20}}>
+  <div style={{width:56,height:56,position:"relative",flexShrink:0}}>
+    <svg width="56" height="56" viewBox="0 0 56 56" aria-hidden="true">
+      <circle cx="28" cy="28" r="22" stroke="#f8dfbd" strokeWidth="6" fill="none"/>
+      <circle cx="28" cy="28" r="22" stroke="#f28c00" strokeWidth="6" fill="none"
+        strokeDasharray="45 95" strokeLinecap="round"
+        style={{transformOrigin:"center",animation:"kidySpin 1s linear infinite"}}/>
+    </svg>
+  </div>
+  <div>
+    <strong style={{display:"block",color:"#ad6100"}}>
+      Preparando dados comerciais...
+    </strong>
+    <small>Aguarde o carregamento dos clientes e indicadores.</small>
+  </div>
+  <style>{`@keyframes kidySpin {to {transform:rotate(360deg)}}`}</style>
+</div>
       )}
 
       <section className="cards">

@@ -43,3 +43,13 @@ yarn-error.log*
 # typescript
 *.tsbuildinfo
 next-env.d.ts
+# Dados comerciais da Carteira Kidy 2027
+/dados-processados/
+/diagnosticos/
+dados-processados/
+*.bak
+*.bak-*
+backup-*/
+*.zip
+*.parquet
+!.env.example

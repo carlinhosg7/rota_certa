@@ -1,4 +1,15 @@
 import fs from "fs";
+import {
+  carregarMapaRepresentantes,
+  normalizarRepresentante,
+} from "./representantes-oficiais";
+import {
+  atualizarCatalogoDrive,
+  versoesCatalogoDrive,
+  lerArquivoComercial,
+  prepararParquetsDrive,
+  pastaParquets
+} from "./google-drive-adapter";
 import path from "path";
 import * as XLSX from "xlsx";
 import { asyncBufferFromFile, parquetReadObjects } from "hyparquet";
@@ -172,6 +183,7 @@ export type CidadeRota = {
 };
 
 type Cache = {
+  versaoRepresentantes: string;
   carteira: Carteira[];
   vendas: Venda[];
   produtosAutorizados: ProdutoAutorizado[];
@@ -180,7 +192,13 @@ type Cache = {
   loadedAt: number;
 };
 
-let cachePromise: Promise<Cache> | null = null;
+let cacheAtual: Cache | null = null;
+let versaoCacheComercial: string | null = null;
+let versaoCacheRepresentantes: string | null = null;
+let atualizacaoEmAndamento: Promise<Cache> | null = null;
+let proximaVerificacaoEm = 0;
+const CACHE_INTERVALO_MS = 15 * 60 * 1000;
+const CACHE_RETRY_MS = 60 * 1000;
 
 export function cleanSupervisor(v: any) {
   const s = cleanCode(v);
@@ -297,15 +315,7 @@ async function carregarCarteiraBase(): Promise<Carteira[]> {
 
   console.log(`[CARTEIRA] Baixando ${nome} diretamente do GitHub...`);
 
-  const response = await fetch(url, { cache: "no-store" });
-
-  if (!response.ok) {
-    throw new Error(
-      `Erro ao baixar ${nome} do GitHub: HTTP ${response.status} - ${url}`
-    );
-  }
-
-  const buffer = Buffer.from(await response.arrayBuffer());
+  const buffer = await lerArquivoComercial(nome);
 
   if (!buffer.length) {
     throw new Error(`${nome} foi baixado, mas está vazio.`);
@@ -412,15 +422,7 @@ async function carregarFinanceiro() {
 
   console.log(`[FINANCEIRO] Baixando ${nome} diretamente do GitHub...`);
 
-  const response = await fetch(url, { cache: "no-store" });
-
-  if (!response.ok) {
-    throw new Error(
-      `Erro ao baixar ${nome} do GitHub: HTTP ${response.status} - ${url}`
-    );
-  }
-
-  const buffer = Buffer.from(await response.arrayBuffer());
+  const buffer = await lerArquivoComercial(nome);
 
   if (!buffer.length) {
     throw new Error(`${nome} foi baixado, mas está vazio.`);
@@ -506,15 +508,7 @@ async function carregarProdutosAutorizados(): Promise<ProdutoAutorizado[]> {
 
   console.log(`[PRODUTOS] Baixando ${nome} diretamente do GitHub...`);
 
-  const response = await fetch(url, { cache: "no-store" });
-
-  if (!response.ok) {
-    throw new Error(
-      `Erro ao baixar ${nome} do GitHub: HTTP ${response.status} - ${url}`
-    );
-  }
-
-  const buffer = Buffer.from(await response.arrayBuffer());
+  const buffer = await lerArquivoComercial(nome);
 
   if (!buffer.length) {
     throw new Error(`${nome} foi baixado, mas está vazio.`);
@@ -597,15 +591,7 @@ async function carregarNomesReferencias(): Promise<NomeReferencia[]> {
 
   console.log(`[NOME REFERENCIAS] Baixando ${nomeArquivo} diretamente do GitHub...`);
 
-  const response = await fetch(url, { cache: "no-store" });
-
-  if (!response.ok) {
-    throw new Error(
-      `Erro ao baixar ${nomeArquivo} do GitHub: HTTP ${response.status} - ${url}`
-    );
-  }
-
-  const buffer = Buffer.from(await response.arrayBuffer());
+  const buffer = await lerArquivoComercial(nomeArquivo);
   if (!buffer.length) throw new Error(`${nomeArquivo} foi baixado, mas está vazio.`);
 
   const wb = XLSX.read(buffer, { type: "buffer", cellDates: true });
@@ -669,15 +655,7 @@ async function carregarMunicipios(): Promise<MunicipioGeo[]> {
 
   console.log(`[GEO] Baixando ${nome} diretamente do GitHub...`);
 
-  const response = await fetch(url, { cache: "no-store" });
-
-  if (!response.ok) {
-    throw new Error(
-      `Erro ao baixar ${nome} do GitHub: HTTP ${response.status} - ${url}`
-    );
-  }
-
-  const buffer = Buffer.from(await response.arrayBuffer());
+  const buffer = await lerArquivoComercial(nome);
 
   if (!buffer.length) {
     throw new Error(`${nome} foi baixado, mas está vazio.`);
@@ -1184,7 +1162,7 @@ export function sugerirRota(
 
 async function carregarVendas(): Promise<Venda[]> {
   const files = fs
-    .readdirSync(DATA_DIR)
+    .readdirSync(pastaParquets())
     .filter((f) => /^DADOS_PREDITIVA_\d+\.parquet$/i.test(f))
     .sort((a, b) =>
       a.localeCompare(b, undefined, { numeric: true })
@@ -1213,7 +1191,7 @@ async function carregarVendas(): Promise<Venda[]> {
   ];
 
   for (const f of files) {
-    const arquivo = path.join(DATA_DIR, f);
+    const arquivo = path.join(pastaParquets(), f);
     console.log(`[VENDAS] Lendo ${f} com hyparquet...`);
 
     // Validação rápida para detectar arquivo incompleto/corrompido antes do parser.
@@ -1239,6 +1217,7 @@ async function carregarVendas(): Promise<Venda[]> {
     try {
       const file = await asyncBufferFromFile(arquivo);
 
+      const inicioLeituraParquet = performance.now();
       const rows = await parquetReadObjects({
         file,
         columns: wanted,
@@ -1248,6 +1227,10 @@ async function carregarVendas(): Promise<Venda[]> {
       console.log(
         `[VENDAS] ${f}: ${rows.length.toLocaleString("pt-BR")} linhas lidas.`
       );
+
+      registrarMemoria(`PARQUET ${f} APOS LEITURA`);
+      const tempoLeituraParquet = performance.now() - inicioLeituraParquet;
+      const inicioConversaoParquet = performance.now();
 
       for (const r of rows as Record<string, any>[]) {
         const codigo = cleanCode(r["Codigo Cliente"]);
@@ -1272,6 +1255,18 @@ async function carregarVendas(): Promise<Venda[]> {
           prazoMedio: number(r["Prazo Medio"]),
         });
       }
+      console.log(
+        "[PERFORMANCE PARQUET]",
+        f,
+        "leitura:",
+        Math.round(tempoLeituraParquet),
+        "ms",
+        "conversao:",
+        Math.round(performance.now() - inicioConversaoParquet),
+        "ms"
+      );
+
+      registrarMemoria(`PARQUET ${f} APOS CONVERSAO`);
     } catch (e: any) {
       throw new Error(
         `Falha ao ler ${f} com hyparquet: ${e?.message || String(e)}`
@@ -1286,19 +1281,128 @@ async function carregarVendas(): Promise<Venda[]> {
   return out;
 }
 
-export async function getData(): Promise<Cache> {
-  if (!cachePromise) {
-    cachePromise = (async () => {
-      await prepararBasesGitHub();
+function registrarMemoria(etapa: string): void {
+  const m = process.memoryUsage();
+  const mb = (valor: number): number =>
+    Math.round((valor / 1048576) * 100) / 100;
 
-      const [carteira, vendas, fin, produtosAutorizados, nomesReferencias, municipios] = await Promise.all([
-        carregarCarteiraBase(),
-        carregarVendas(),
-        carregarFinanceiro(),
-        carregarProdutosAutorizados(),
-        carregarNomesReferencias(),
-        carregarMunicipios(),
-      ]);
+  console.log("[MEMORIA]", etapa, {
+    rssMB: mb(m.rss),
+    heapUsedMB: mb(m.heapUsed),
+    heapTotalMB: mb(m.heapTotal),
+    externalMB: mb(m.external),
+    arrayBuffersMB: mb(m.arrayBuffers),
+  });
+}
+async function carregarDadosAtualizados(): Promise<Cache> {
+  registrarMemoria('INICIO');
+      const inicioTotal = performance.now();
+      const inicioPreparacao = performance.now();
+
+      if (
+        (process.env.KIDY_DATA_SOURCE || "github").toLowerCase() === "drive"
+      ) {
+        const inicioCatalogo = performance.now();
+        await atualizarCatalogoDrive();
+
+        console.log(
+          "[PERFORMANCE DRIVE] Catalogo:",
+          Math.round(performance.now() - inicioCatalogo),
+          "ms"
+        );
+
+        const inicioParquetsDrive = performance.now();
+        await prepararParquetsDrive();
+
+        console.log(
+          "[PERFORMANCE DRIVE] Preparacao Parquets:",
+          Math.round(performance.now() - inicioParquetsDrive),
+          "ms"
+        );
+      } else {
+        await prepararBasesGitHub();
+      }
+
+      console.log(
+        "[PERFORMANCE CARGA] Preparacao arquivos:",
+        Math.round(performance.now() - inicioPreparacao),
+        "ms"
+      );
+
+      registrarMemoria('APOS PREPARACAO');
+      const inicioBases = performance.now();
+
+      async function medirBase<T>(
+  nome: string,
+  carregar: () => Promise<T>
+): Promise<T> {
+  const inicio = performance.now();
+
+  try {
+    return await carregar();
+  } finally {
+    console.log(
+      "[PERFORMANCE BASE]",
+      nome,
+      Math.round(performance.now() - inicio),
+      "ms"
+    );
+  }
+}
+
+const [carteira, vendas, fin, produtosAutorizados, nomesReferencias, municipios, mapaRepresentantes] = await Promise.all([
+  medirBase("CARTEIRA", carregarCarteiraBase),
+  medirBase("VENDAS", carregarVendas),
+  medirBase("FINANCEIRO", carregarFinanceiro),
+  medirBase("PRODUTOS", carregarProdutosAutorizados),
+  medirBase("REFERENCIAS", carregarNomesReferencias),
+  medirBase("MUNICIPIOS", carregarMunicipios),
+  medirBase("REPRESENTANTES", carregarMapaRepresentantes),
+]);
+
+      console.log(
+        "[PERFORMANCE CARGA] Leitura e processamento bases:",
+        Math.round(performance.now() - inicioBases),
+        "ms"
+      );
+
+      registrarMemoria('APOS LEITURA BASES');
+      const inicioConsolidacao = performance.now();
+
+      // Aplicar o De/Para oficial em todas as vendas históricas.
+      for (const v of vendas) {
+        const oficial = normalizarRepresentante(v.rep, mapaRepresentantes);
+        v.rep = oficial.codigo;
+
+        if (oficial.supervisor) {
+          v.sup = oficial.supervisor;
+        }
+      }
+
+      // Aplicar o De/Para na carteira atual.
+      for (const c of carteira) {
+        const oficial = normalizarRepresentante(c.rep, mapaRepresentantes);
+        c.rep = oficial.codigo;
+
+        if (oficial.supervisor) {
+          c.sup = oficial.supervisor;
+        }
+      }
+
+      // Eliminar duplicidades após a normalização.
+      const carteiraNormalizada = new Map<string, (typeof carteira)[number]>();
+
+      for (const c of carteira) {
+        carteiraNormalizada.set(`${c.codigo}|${c.rep}`, c);
+      }
+
+      carteira.length = 0;
+      carteira.push(...carteiraNormalizada.values());
+
+      console.log("[REPRESENTANTES] Cadastro:", mapaRepresentantes.cadastro.size);
+      console.log("[REPRESENTANTES] De/Para:", mapaRepresentantes.dePara.size);
+      console.log("[REPRESENTANTES] Carteira:", carteira.length);
+      console.log("[REPRESENTANTES] Vendas:", vendas.length);
 
       const latest = new Map<
         string,
@@ -1325,7 +1429,13 @@ export async function getData(): Promise<Cache> {
       });
 
       for (const c of carteira) {
+        const regionalOficial = normalizarRepresentante(
+          c.rep,
+          mapaRepresentantes
+        ).supervisor;
+
         c.sup =
+          regionalOficial ||
           latest.get(c.rep)?.sup ||
           cleanSupervisor(c.sup);
 
@@ -1337,17 +1447,168 @@ export async function getData(): Promise<Cache> {
         }
       }
 
-      return { carteira, vendas, produtosAutorizados, nomesReferencias, municipios, loadedAt: Date.now() };
-    })().catch((erro) => {
-      // Permite nova tentativa na próxima chamada se algum download/leitura falhar.
-      cachePromise = null;
-      throw erro;
+      console.log(
+        "[PERFORMANCE CARGA] Consolidacao:",
+        Math.round(performance.now() - inicioConsolidacao),
+        "ms"
+      );
+
+      console.log(
+        "[PERFORMANCE CARGA] TOTAL:",
+        Math.round(performance.now() - inicioTotal),
+        "ms"
+      );
+
+      return {
+        carteira,
+        vendas,
+        produtosAutorizados,
+        nomesReferencias,
+        municipios,
+        loadedAt: Date.now(),
+        versaoRepresentantes: mapaRepresentantes.versao,
+      };
+
+}
+
+let indiceCache: Cache | null = null;
+let indiceVendas: Map<string, Venda[]> | null = null;
+
+export function getIndiceVendas(dados: Cache): Map<string, Venda[]> {
+  if (indiceCache === dados && indiceVendas) {
+    return indiceVendas;
+  }
+
+  const inicio = performance.now();
+  const indice = new Map<string, Venda[]>();
+
+  for (const venda of dados.vendas) {
+    const codigo = cleanCode(venda.codigo);
+    if (!codigo) continue;
+
+    let lista = indice.get(codigo);
+
+    if (!lista) {
+      lista = [];
+      indice.set(codigo, lista);
+    }
+
+    lista.push(venda);
+  }
+
+  indiceCache = dados;
+  indiceVendas = indice;
+
+  console.log(
+    "[INDICE VENDAS] Construido:",
+    indice.size,
+    "clientes em",
+    Math.round(performance.now() - inicio),
+    "ms"
+  );
+
+  return indice;
+}
+export async function getData(): Promise<Cache> {
+  const agora = Date.now();
+
+  if (!cacheAtual && atualizacaoEmAndamento) {
+    return atualizacaoEmAndamento;
+  }
+
+  if (cacheAtual && agora < proximaVerificacaoEm) {
+    return cacheAtual;
+  }
+
+  if (!atualizacaoEmAndamento) {
+    proximaVerificacaoEm = agora + CACHE_INTERVALO_MS;
+
+    const tarefa = (async (): Promise<Cache> => {
+      const usandoDrive =
+        (process.env.KIDY_DATA_SOURCE || "github").toLowerCase() === "drive";
+
+      if (cacheAtual) {
+        const mapaAtual = await carregarMapaRepresentantes();
+        const representantesMudaram =
+          versaoCacheRepresentantes === null ||
+          mapaAtual.versao !== versaoCacheRepresentantes;
+
+        const inicioVerificacao = performance.now();
+
+        if (usandoDrive) {
+          await atualizarCatalogoDrive(true);
+        }
+
+        const versaoAtual = usandoDrive
+          ? versoesCatalogoDrive()
+          : null;
+
+        console.log(
+          "[CACHE] Verificacao Drive:",
+          Math.round(performance.now() - inicioVerificacao),
+          "ms"
+        );
+
+        if (
+          !representantesMudaram &&
+          (!usandoDrive ||
+            (versaoCacheComercial !== null &&
+              versaoAtual === versaoCacheComercial))
+        ) {
+          console.log(
+            "[CACHE] Drive e representantes sem alterações. Reutilizando dados processados."
+          );
+
+          return cacheAtual;
+        }
+      }
+
+      const novoCache = await carregarDadosAtualizados();
+
+      // Registrar a versão aplicada ao novo processamento.
+      // Se houver mudança posterior, a próxima verificação recarregará os dados.
+      versaoCacheRepresentantes = novoCache.versaoRepresentantes;
+
+      if (usandoDrive) {
+        versaoCacheComercial = versoesCatalogoDrive();
+      }
+
+      return novoCache;
+    })();
+
+    atualizacaoEmAndamento = tarefa;
+
+    void tarefa.then(
+      (novoCache) => {
+        const mudou = cacheAtual !== novoCache;
+
+        cacheAtual = novoCache;
+        proximaVerificacaoEm = Date.now() + CACHE_INTERVALO_MS;
+
+        if (mudou) {
+          registrarMemoria("CACHE ATUALIZADO");
+          console.log("[CACHE] Bases comerciais atualizadas.");
+        } else {
+          console.log("[CACHE] Cache comercial mantido.");
+        }
+      },
+      (erro) => {
+        proximaVerificacaoEm = Date.now() + CACHE_RETRY_MS;
+        console.error("[CACHE] Falha na atualizacao:", erro);
+      }
+    ).finally(() => {
+      if (atualizacaoEmAndamento === tarefa) {
+        atualizacaoEmAndamento = null;
+      }
     });
   }
 
-  return cachePromise;
-}
+  if (cacheAtual) {
+    return cacheAtual;
+  }
 
+  return atualizacaoEmAndamento!;
+}
 export function campanhaPorNomeReferencia(nome: string): string | null {
   const n = norm(nome);
   if (!n) return null;

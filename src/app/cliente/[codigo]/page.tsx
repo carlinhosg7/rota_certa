@@ -6,6 +6,7 @@ import { validarToken } from "@/lib/auth";
 import ResultadoAtendimento from "@/components/ResultadoAtendimento";
 import {
   getData,
+  getIndiceVendas,
   cleanCode,
   cleanReferencia,
   MAPA_SUPERVISORES,
@@ -60,7 +61,10 @@ export default async function ClientePage({ params }: Props) {
   // DADOS
   // ============================================================
 
-  const { carteira, vendas, produtosAutorizados, nomesReferencias } = await getData();
+  const inicioDados = performance.now();
+  const dados = await getData();
+  const { carteira, vendas, produtosAutorizados, nomesReferencias } = dados;
+  console.log("[PERFORMANCE CLIENTE] getData:", Math.round(performance.now() - inicioDados), "ms");
 
   const codigoLimpo = cleanCode(codigo);
 
@@ -253,17 +257,19 @@ export default async function ClientePage({ params }: Props) {
     mix: linhasCliente.size,
   };
 
-  const carteiraPorCodigo = new Map(carteira.map((c) => [cleanCode(c.codigo), c]));
-  const vendasPorCliente = new Map<string, typeof vendas>();
+  const inicioIndice = performance.now();
 
-  for (const v of vendas) {
-    const cod = cleanCode(v.codigo);
-    if (!cod || cod === codigoLimpo) continue;
-    const arr = vendasPorCliente.get(cod) || [];
-    arr.push(v);
-    vendasPorCliente.set(cod, arr);
-  }
+  const carteiraPorCodigo = new Map(
+    carteira.map((c) => [cleanCode(c.codigo), c])
+  );
 
+  const vendasPorCliente = getIndiceVendas(dados);
+
+  console.log(
+    "[PERFORMANCE CLIENTE] indice vendas:",
+    Math.round(performance.now() - inicioIndice),
+    "ms"
+  );
   function proximidadeLog(a: number, b: number) {
     if (a <= 0 && b <= 0) return 1;
     if (a <= 0 || b <= 0) return 0;
@@ -273,6 +279,7 @@ export default async function ClientePage({ params }: Props) {
 
   const candidatosSemelhantes = [...vendasPorCliente.entries()]
     .map(([cod, vs]) => {
+      if (cod === codigoLimpo) return null;
       const cad = carteiraPorCodigo.get(cod);
       if (!cad || !vs.length) return null;
 

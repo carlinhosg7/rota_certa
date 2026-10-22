@@ -1,3 +1,4 @@
+import { carregarCarteira2027 } from "../../../lib/carteira-2027-data";
 import "server-only";
 
 import fs from "node:fs/promises";
@@ -88,17 +89,12 @@ export default async function ListaCarteira({ searchParams }: Props) {
   const representante = cod(params.representante);
   const busca = String(params.busca ?? "").trim().slice(0, 100);
 
-  const arquivo = path.join(
-    process.cwd(),
-    "dados-processados",
-    "carteira-2027",
-    "clientes.json"
-  );
+
 
   let clientes: Cliente[] = [];
 
   try {
-    clientes = JSON.parse(await fs.readFile(arquivo, "utf8"));
+    clientes = (await carregarCarteira2027()).clientes;
   } catch {
     return (
       <div style={{ padding: 30 }}>

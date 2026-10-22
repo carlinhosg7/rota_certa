@@ -1,3 +1,4 @@
+import { carregarCarteira2027 } from "../../../lib/carteira-2027-data";
 import "server-only";
 
 import fs from "node:fs/promises";
@@ -246,18 +247,13 @@ export default async function VisaoGrupos({ searchParams }: Props) {
   const busca = texto(params.busca).slice(0, 100);
   const grupoSelecionado = texto(params.grupo);
 
-  const arquivo = path.join(
-    process.cwd(),
-    "dados-processados",
-    "carteira-2027",
-    "clientes.json"
-  );
+
 
   let clientes: Cliente[] = [];
   let erro = "";
 
   try {
-    clientes = JSON.parse(await fs.readFile(arquivo, "utf8"));
+    clientes = (await carregarCarteira2027()).clientes;
   } catch {
     erro = "Base de carteira indisponível no servidor.";
   }

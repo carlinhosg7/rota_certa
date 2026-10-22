@@ -1,3 +1,4 @@
+import { carregarCarteira2027 } from "../../lib/carteira-2027-data";
 import "server-only";
 
 import fs from "node:fs/promises";
@@ -138,26 +139,17 @@ export default async function CarteiraPage({
 
   const parametros = await searchParams;
 
-  const caminho = path.join(
-    process.cwd(),
-    "dados-processados",
-    "carteira-2027"
-  );
-
   let clientes: Cliente[] = [];
   let resumo: Resumo | null = null;
   let erroBase = "";
 
   try {
-    const [arquivoClientes, arquivoResumo] = await Promise.all([
-      fs.readFile(path.join(caminho, "clientes.json"), "utf8"),
-      fs.readFile(path.join(caminho, "resumo.json"), "utf8")
-    ]);
-
-    clientes = JSON.parse(arquivoClientes) as Cliente[];
-    resumo = JSON.parse(arquivoResumo) as Resumo;
-  } catch {
-    erroBase = "Base da Carteira 2027 não encontrada no servidor.";
+    const dados = await carregarCarteira2027();
+    clientes = dados.clientes as Cliente[];
+    resumo = dados.resumo as Resumo;
+  } catch (e) {
+    console.error("[CARTEIRA 2027]", e);
+    erroBase = "Falha ao carregar a Carteira 2027 do Google Drive.";
   }
 
   // Controle de acesso aplicado ANTES dos filtros da interface.

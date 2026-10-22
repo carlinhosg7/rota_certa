@@ -3,6 +3,7 @@ const path = require("path");
 const crypto = require("crypto");
 
 const NOMES_OFICIAIS = [
+  "DADOS PRETIVIA CLIENTES.xlsx",
   "DADOS_PREDITIVA_1.parquet",
   "DADOS_PREDITIVA_2.parquet",
   "DADOS_PREDITIVA_3.parquet",

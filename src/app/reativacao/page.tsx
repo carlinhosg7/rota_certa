@@ -153,6 +153,7 @@ function pontuar(
 async function prioridadesManuais(
   codigos: string[]
 ): Promise<Map<string, Prioridade>> {
+  const inicio = Date.now();
   const resultado = new Map<string, Prioridade>();
 
   if (!codigos.length) return resultado;
@@ -162,69 +163,101 @@ async function prioridadesManuais(
     process.env.SUPABASE_URL ||
     ""
   ).replace(/\/$/, "");
-  const chave = process.env.SUPABASE_SECRET_KEY;
+
+  const chave: string = process.env.SUPABASE_SECRET_KEY || "";
 
   if (!base || !chave) {
-    throw new Error(
-      "Configuração do Supabase ausente para leitura de prioridades."
-    );
+    throw new Error("Configuracao Supabase ausente.");
   }
 
   const permitidas = new Set([
-    "ALTO", "MEDIO", "BAIXO", "NAO_AVALIADO",
+    "ALTO", "MEDIO", "BAIXO", "NAO_AVALIADO"
   ]);
 
-  // Consultas em lotes para evitar URLs muito grandes.
+  const lotes: string[][] = [];
+
   for (let i = 0; i < codigos.length; i += 100) {
-    const lote = codigos.slice(i, i + 100);
+    lotes.push(codigos.slice(i, i + 100));
+  }
 
-    const url = new URL(
-      "/rest/v1/kidy_cliente_prioridade",
-      base
-    );
+  console.log(
+    "[REATIVACAO] Consultando prioridades:",
+    codigos.length,
+    "clientes em",
+    lotes.length,
+    "lotes"
+  );
 
-    url.searchParams.set(
-      "select",
-      "codigo_cliente,classificacao"
-    );
+  let proximo = 0;
 
-    url.searchParams.set(
-      "codigo_cliente",
-      `in.(${lote.map(c => `"${c.replace(/["\\]/g, "")}"`).join(",")})`
-    );
+  async function trabalhador(): Promise<void> {
+    while (proximo < lotes.length) {
+      const indice = proximo++;
+      const lote = lotes[indice];
 
-    const resposta = await fetch(url.toString(), {
-      headers: {
-        apikey: chave,
-        Authorization: `Bearer ${chave}`,
-      },
-      cache: "no-store",
-    });
-
-    if (!resposta.ok) {
-      throw new Error(
-        `Falha ao consultar prioridades no Supabase: HTTP ${resposta.status}`
+      const url = new URL(
+        "/rest/v1/kidy_cliente_prioridade",
+        base
       );
-    }
 
-    const linhas = await resposta.json() as Array<{
-      codigo_cliente: string;
-      classificacao: string;
-    }>;
+      url.searchParams.set(
+        "select",
+        "codigo_cliente,classificacao"
+      );
 
-    for (const linha of linhas) {
-      if (permitidas.has(linha.classificacao)) {
-        resultado.set(
-          codigo(linha.codigo_cliente),
-          linha.classificacao as Prioridade
+      url.searchParams.set(
+        "codigo_cliente",
+        `in.(${lote.map(c =>
+          `"${c.replace(/["\\]/g, "")}"`
+        ).join(",")})`
+      );
+
+      const resposta = await fetch(url.toString(), {
+        headers: {
+          apikey: chave,
+          Authorization: `Bearer ${chave}`
+        },
+        cache: "no-store",
+        signal: AbortSignal.timeout(12000)
+      });
+
+      if (!resposta.ok) {
+        throw new Error(
+          `Supabase HTTP ${resposta.status} no lote ${indice + 1}`
         );
+      }
+
+      const linhas = await resposta.json() as Array<{
+        codigo_cliente: string;
+        classificacao: string;
+      }>;
+
+      for (const linha of linhas) {
+        if (permitidas.has(linha.classificacao)) {
+          resultado.set(
+            codigo(linha.codigo_cliente),
+            linha.classificacao as Prioridade
+          );
+        }
       }
     }
   }
 
+  await Promise.all(
+    Array.from(
+      { length: Math.min(5, lotes.length) },
+      () => trabalhador()
+    )
+  );
+
+  console.log(
+    "[REATIVACAO] Prioridades concluidas em",
+    Date.now() - inicio,
+    "ms"
+  );
+
   return resultado;
 }
-
 export default async function RankingReativacao({
   searchParams,
 }: Props) {
@@ -252,7 +285,18 @@ export default async function RankingReativacao({
   const filtroSup = codigo(parametro(params, "supervisor"));
   const busca = parametro(params, "busca");
 
+  const inicioRanking = Date.now();
+
+  // Inicia as duas leituras pesadas em paralelo.
+  const dadosPromise = getData();
+
   const base = await carregarCarteira2027();
+
+  console.log(
+    "[REATIVACAO] Carteira carregada em",
+    Date.now() - inicioRanking,
+    "ms"
+  );
   let clientes = base.clientes as Cliente[];
 
   // Segurança aplicada antes de qualquer filtro solicitado.
@@ -342,9 +386,15 @@ export default async function RankingReativacao({
   const conjunto = new Set(codigos);
 
   const [dados, manuais] = await Promise.all([
-    getData(),
+    dadosPromise,
     prioridadesManuais(codigos),
   ]);
+
+  console.log(
+    "[REATIVACAO] Bases e prioridades prontas em",
+    Date.now() - inicioRanking,
+    "ms"
+  );
 
   const estatisticas = new Map<string, Estatistica>();
 
@@ -377,6 +427,12 @@ export default async function RankingReativacao({
       e.pedidos.add(String(venda.numeroPedido));
     }
   }
+
+  console.log(
+    "[REATIVACAO] Historico processado em",
+    Date.now() - inicioRanking,
+    "ms"
+  );
 
   const hoje = Date.now();
 

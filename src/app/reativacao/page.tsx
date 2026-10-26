@@ -4,7 +4,7 @@ import { cookies } from "next/headers";
 import { redirect } from "next/navigation";
 import Sidebar from "@/components/Sidebar";
 import { validarToken } from "@/lib/auth";
-import { getData, cleanCode } from "@/lib/comercial-data";
+import { cleanCode } from "@/lib/comercial-data";
 import { carregarCarteira2027 } from "@/lib/carteira-2027-data";
 
 export const runtime = "nodejs";
@@ -30,14 +30,6 @@ type Cliente = {
 };
 
 type Prioridade = "ALTO" | "MEDIO" | "BAIXO" | "NAO_AVALIADO";
-
-type Estatistica = {
-  pares: number;
-  faturamento: number;
-  ultimaEntrega: number;
-  pedidos: Set<string>;
-  anos: Set<number>;
-};
 
 type Registro = {
   codigo: string;
@@ -103,51 +95,6 @@ function parametro(
 ): string {
   const v = params[chave];
   return (typeof v === "string" ? v : "").trim().slice(0, 120);
-}
-
-function dataValida(v: Date | null | undefined): number {
-  if (!v) return 0;
-  const d = v instanceof Date ? v : new Date(v);
-  const t = d.getTime();
-  return Number.isFinite(t) ? t : 0;
-}
-
-function pontuar(
-  e: Estatistica | undefined,
-  credito: number,
-  bloqueado: boolean,
-  hoje: number
-): { score: number; prioridade: Prioridade; dias: number | null } {
-  if (!e || !e.ultimaEntrega) {
-    return { score: 0, prioridade: "NAO_AVALIADO", dias: null };
-  }
-
-  const dias = Math.max(
-    0,
-    Math.floor((hoje - e.ultimaEntrega) / 86400000)
-  );
-
-  // Pontuação operacional provisória:
-  // volume 40, recência 25, frequência 25, crédito 10.
-  const volume = Math.min(40, (e.pares / 5000) * 40);
-
-  const recencia =
-    dias <= 1095 ? 25 :
-    dias <= 1825 ? 18 :
-    dias <= 2555 ? 10 : 4;
-
-  const frequencia = Math.min(25, e.anos.size * 5);
-  const financeiro = !bloqueado && credito > 0 ? 10 : 0;
-
-  const score = Math.round(
-    volume + recencia + frequencia + financeiro
-  );
-
-  const prioridade: Prioridade =
-    score >= 65 ? "ALTO" :
-    score >= 35 ? "MEDIO" : "BAIXO";
-
-  return { score, prioridade, dias };
 }
 
 async function prioridadesManuais(
@@ -258,6 +205,32 @@ async function prioridadesManuais(
 
   return resultado;
 }
+type LinhaRanking = {
+  codigo_cliente: string;
+  dias: number | null;
+  pares: number;
+  faturamento: number;
+  score: number;
+  prioridade_automatica: Prioridade;
+};
+
+async function buscarRankingConsolidado(): Promise<Map<string, LinhaRanking>> {
+  const base = (process.env.NEXT_PUBLIC_SUPABASE_URL || process.env.SUPABASE_URL || "").replace(/\/$/, "");
+  const chave = process.env.SUPABASE_SECRET_KEY || "";
+  if (!base || !chave) throw new Error("Supabase nao configurado para ranking");
+  const resultado = new Map<string, LinhaRanking>();
+  // Busca somente as colunas usadas pela tela; nenhuma leitura de Parquet.
+  for (let inicio = 0; ; inicio += 1000) {
+    const url = `${base}/rest/v1/kidy_ranking_reativacao?select=codigo_cliente,dias,pares,faturamento,score,prioridade_automatica&order=codigo_cliente.asc&limit=1000&offset=${inicio}`;
+    const resp = await fetch(url, { headers: { apikey: chave, Authorization: `Bearer ${chave}` }, cache: "no-store", signal: AbortSignal.timeout(15000) });
+    if (!resp.ok) throw new Error(`Ranking consolidado HTTP ${resp.status}`);
+    const linhas = await resp.json() as LinhaRanking[];
+    for (const linha of linhas) resultado.set(codigo(linha.codigo_cliente), linha);
+    if (linhas.length < 1000) break;
+  }
+  return resultado;
+}
+
 export default async function RankingReativacao({
   searchParams,
 }: Props) {
@@ -372,60 +345,23 @@ export default async function RankingReativacao({
     ),
   ];
 
-  const conjunto = new Set(codigos);
-
-  const [dados, manuais] = await Promise.all([
-    getData(),
+  const [consolidado, manuais] = await Promise.all([
+    buscarRankingConsolidado(),
     prioridadesManuais(codigos),
   ]);
 
-  const estatisticas = new Map<string, Estatistica>();
-
-  for (const venda of dados.vendas) {
-    const cod = codigo(venda.codigo);
-    if (!conjunto.has(cod)) continue;
-
-    const entrega = dataValida(venda.dataEntrega);
-    if (!entrega) continue;
-
-    let e = estatisticas.get(cod);
-
-    if (!e) {
-      e = {
-        pares: 0,
-        faturamento: 0,
-        ultimaEntrega: 0,
-        pedidos: new Set<string>(),
-        anos: new Set<number>(),
-      };
-      estatisticas.set(cod, e);
-    }
-
-    e.pares += Number(venda.qtd) || 0;
-    e.faturamento += Number(venda.vlr) || 0;
-    e.ultimaEntrega = Math.max(e.ultimaEntrega, entrega);
-    e.anos.add(new Date(entrega).getFullYear());
-
-    if (venda.numeroPedido) {
-      e.pedidos.add(String(venda.numeroPedido));
-    }
-  }
-
-  const hoje = Date.now();
-
   let registros: Registro[] = clientes.map(c => {
     const cod = codigo(c.codigoCliente);
-    const e = estatisticas.get(cod);
+    const e = consolidado.get(cod);
 
     const credito = Number(c.limiteDisponivel) || 0;
     const bloqueado = Boolean(c.bloqueadoFinanceiro);
 
-    const calculo = pontuar(
-      e,
-      credito,
-      bloqueado,
-      hoje
-    );
+    const calculo = {
+      dias: e?.dias ?? null,
+      score: e?.score ?? 0,
+      prioridade: e?.prioridade_automatica ?? ("NAO_AVALIADO" as Prioridade),
+    };
 
     const manual = manuais.has(cod);
 

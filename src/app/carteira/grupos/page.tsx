@@ -1,4 +1,5 @@
 import { carregarCarteira2027 } from "../../../lib/carteira-2027-data";
+import { listarGerentesRegionais } from "../../../lib/carteira-gerentes";
 import "server-only";
 
 import fs from "node:fs/promises";
@@ -28,9 +29,11 @@ type Cliente = {
   faixa?: string;
   ultimaCompra?: string;
   representantes?: Vinculo[];
+  representanteAtual?: Vinculo[];
   supervisores?: Vinculo[];
   bloqueadoFinanceiro?: boolean;
   limiteDisponivel?: number;
+  situacaoEmpresa?: string;
 };
 
 type Grupo = {
@@ -45,9 +48,11 @@ type Props = {
     grupo?: string;
     pagina?: string;
     supervisor?: string;
+    gerente?: string;
     representante?: string;
     filtro?: string;
     filtroCliente?: string;
+    receita?: string;
   }>;
 };
 
@@ -261,7 +266,7 @@ export default async function VisaoGrupos({ searchParams }: Props) {
   // Permissões aplicadas ANTES de agrupar.
   if (perfil === "REPRESENTANTE") {
     clientes = clientes.filter(c =>
-      c.representantes?.some(r => codigo(r.codigo) === repLogin)
+      c.representanteAtual?.some(r => codigo(r.codigo) === repLogin)
     );
   } else if (perfil === "SUPERVISOR") {
     clientes = clientes.filter(c =>
@@ -366,8 +371,19 @@ export default async function VisaoGrupos({ searchParams }: Props) {
     return "ACIMA_60";
   }
 
+  const gerentesRegionais = await listarGerentesRegionais();
+  const gerenteFiltro = texto(params.gerente).toUpperCase();
+  const supervisoresGerente = new Set(
+    gerentesRegionais.filter(g => g.gerente.toUpperCase() === gerenteFiltro)
+      .map(g => codigo(g.codigo_supervisor))
+  );
+  const opcoesGerentes = [...new Set(gerentesRegionais.map(g => g.gerente))]
+    .filter(Boolean).sort((a,b) => a.localeCompare(b, 'pt-BR'));
   const supervisorFiltro = codigo(params.supervisor);
   const representanteFiltro = codigo(params.representante);
+  const situacoesReceita = ["ATIVA", "BAIXADA", "INAPTA", "SUSPENSA", "NAO LOCALIZADO", "PENDENTE FORMATO", "NAO VERIFICADA"];
+  const receita = situacoesReceita.includes(texto(params.receita).toUpperCase()) ? texto(params.receita).toUpperCase() : "";
+
 
   // Opcoes respeitam a carteira permitida ao usuario autenticado.
   const opcoesSupervisores = new Map<string, string>();
@@ -378,7 +394,7 @@ export default async function VisaoGrupos({ searchParams }: Props) {
       const id = codigo(s.codigo);
       if (id) opcoesSupervisores.set(id, texto(s.nome) || id);
     }
-    for (const r of c.representantes || []) {
+    for (const r of c.representanteAtual || []) {
       const id = codigo(r.codigo);
       if (id) opcoesRepresentantes.set(id, texto(r.nome) || id);
     }
@@ -388,15 +404,37 @@ export default async function VisaoGrupos({ searchParams }: Props) {
     .map(g => ({
       ...g,
       clientes: g.clientes.filter(c =>
+        (!gerenteFiltro || c.supervisores?.some(
+          s => supervisoresGerente.has(codigo(s.codigo))
+        )) &&
         (!supervisorFiltro || c.supervisores?.some(
           s => codigo(s.codigo) === supervisorFiltro
         )) &&
-        (!representanteFiltro || c.representantes?.some(
+        (!representanteFiltro || c.representanteAtual?.some(
           r => codigo(r.codigo) === representanteFiltro
         ))
       ),
     }))
     .filter(g => g.clientes.length > 0);
+
+  // PAINEL_RECEITA_2027: indicadores respeitam permissões e filtros comerciais.
+  const indicadoresReceita = situacoesReceita.map(st => {
+    const afetados = gruposPainel.flatMap(g => g.clientes).filter(c =>
+      String(c.situacaoEmpresa || "NAO VERIFICADA").replaceAll("_", " ").toUpperCase() === st
+    );
+    return {situacao: st, clientes: afetados.length, grupos: new Set(afetados.map(c => normalizar(c.grupoCliente)).filter(Boolean)).size};
+  });
+  const riscoReceita = gruposPainel.flatMap(g => g.clientes).filter(c =>
+    ["BAIXADA", "INAPTA"].includes(String(c.situacaoEmpresa || "").toUpperCase()) && Number(c.limiteDisponivel) > 0
+  ).length;
+  if (receita) {
+    for (const g of gruposPainel) {
+      g.clientes = g.clientes.filter(c => String(c.situacaoEmpresa || "NAO VERIFICADA").replaceAll("_", " ").toUpperCase() === receita);
+    }
+    for (let i = gruposPainel.length - 1; i >= 0; i--) {
+      if (!gruposPainel[i].clientes.length) gruposPainel.splice(i, 1);
+    }
+  }
 
   const totalGruposPainel = gruposPainel.length;
 
@@ -472,9 +510,11 @@ export default async function VisaoGrupos({ searchParams }: Props) {
   function linkFiltro(filtro: string): string {
     const q = new URLSearchParams();
 
+    if (gerenteFiltro) q.set("gerente", gerenteFiltro);
     if (supervisorFiltro) q.set("supervisor", supervisorFiltro);
     if (representanteFiltro) q.set("representante", representanteFiltro);
     if (busca) q.set("busca", busca);
+    if (receita) q.set("receita", receita);
 
     if (filtro !== "todos") q.set("filtro", filtro);
 
@@ -518,6 +558,8 @@ export default async function VisaoGrupos({ searchParams }: Props) {
   function urlPagina(p: number) {
     const q = new URLSearchParams();
     if (busca) q.set("busca", busca);
+    if (receita) q.set("receita", receita);
+    if (gerenteFiltro) q.set("gerente", gerenteFiltro);
     if (supervisorFiltro) q.set("supervisor", supervisorFiltro);
     if (representanteFiltro) q.set("representante", representanteFiltro);
     if (filtroGrupo !== "todos") q.set("filtro", filtroGrupo);
@@ -710,6 +752,7 @@ export default async function VisaoGrupos({ searchParams }: Props) {
     const q = new URLSearchParams();
 
     if (grupoSelecionado) q.set("grupo", grupoSelecionado);
+    if (gerenteFiltro) q.set("gerente", gerenteFiltro);
     if (supervisorFiltro) q.set("supervisor", supervisorFiltro);
     if (representanteFiltro) q.set("representante", representanteFiltro);
 
@@ -732,8 +775,13 @@ export default async function VisaoGrupos({ searchParams }: Props) {
       texto(a.razaoSocial).localeCompare(texto(b.razaoSocial), "pt-BR")
   );
 
-  const linkGrupo = (g: Grupo) =>
-    `/carteira/grupos?grupo=${encodeURIComponent(g.chave)}`;
+  const linkGrupo = (g: Grupo) => {
+    const q = new URLSearchParams({ grupo: g.chave });
+    if (gerenteFiltro) q.set('gerente', gerenteFiltro);
+    if (supervisorFiltro) q.set('supervisor', supervisorFiltro);
+    if (representanteFiltro) q.set('representante', representanteFiltro);
+    return `/carteira/grupos?${q.toString()}`;
+  };
 
   return (
     <div className="app-shell">
@@ -788,6 +836,15 @@ export default async function VisaoGrupos({ searchParams }: Props) {
     <form method="GET" action="/carteira/grupos"
       style={{ display: "flex", gap: 12, flexWrap: "wrap", alignItems: "end" }}>
 
+      <label style={{ flex: "1 1 160px", fontSize: 12 }}>
+        Gerente
+        <select name="gerente" defaultValue={gerenteFiltro}
+          style={{ display: "block", width: "100%", padding: 11, marginTop: 6 }}>
+          <option value="">Todos</option>
+          {opcoesGerentes.map(g => <option key={g} value={g}>{g}</option>)}
+        </select>
+      </label>
+
       <label style={{ flex: "1 1 220px", fontSize: 12 }}>
         Supervisor
         <select name="supervisor" defaultValue={supervisorFiltro}
@@ -814,6 +871,14 @@ export default async function VisaoGrupos({ searchParams }: Props) {
         </select>
       </label>
 
+       <label style={{flex: "1 1 180px", fontSize: 12}}>
+         Situação Receita Federal
+         <select name="receita" defaultValue={receita} style={{display: "block", width: "100%", padding: 11, marginTop: 6}}>
+           <option value="">Todas</option>
+           {situacoesReceita.map(st => <option key={st} value={st}>{st}</option>)}
+         </select>
+       </label>
+
       <button type="submit" style={{
         padding: "12px 18px", background: "#f28c00",
         color: "#fff", border: 0, borderRadius: 8, fontWeight: 800
@@ -824,6 +889,27 @@ export default async function VisaoGrupos({ searchParams }: Props) {
       </Link>
     </form>
   </section>
+
+   <section style={painel}>
+     <h2 style={{margin: "0 0 8px", fontSize: 18}}>Situação cadastral — Receita Federal</h2>
+     <p style={{fontSize: 12, marginBottom: 14}}>Grupos distintos por Grupo Cliente; classificação cadastral independente da carteira comercial.</p>
+     <div style={{display: "grid", gridTemplateColumns: "repeat(auto-fit,minmax(140px,1fr))", gap: 10}}>
+       {indicadoresReceita.map(item => {
+         const q = new URLSearchParams({receita: item.situacao});
+         if (gerenteFiltro) q.set("gerente", gerenteFiltro);
+         if (supervisorFiltro) q.set("supervisor", supervisorFiltro);
+         if (representanteFiltro) q.set("representante", representanteFiltro);
+         return <Link key={item.situacao} href={`/carteira/grupos?${q}#lista-grupos`} style={{textDecoration: "none", color: "inherit", border: `1px solid ${cores.borda}`, padding: 12, borderRadius: 10}}>
+           <div style={{fontSize: 12, fontWeight: 800}}>{item.situacao}</div>
+           <div style={{fontSize: 24, fontWeight: 900}}>{numero(item.grupos)}</div>
+           <div style={{fontSize: 12}}>{numero(item.clientes)} clientes</div>
+         </Link>;
+       })}
+     </div>
+     <p style={{marginTop: 12, color: cores.vermelho, fontWeight: 800, fontSize: 12}}>
+       Atenção: {numero(riscoReceita)} clientes com CNPJ baixado ou inapto e limite disponível.
+     </p>
+   </section>
 
   <div style={{
     display: "grid",
@@ -935,6 +1021,7 @@ export default async function VisaoGrupos({ searchParams }: Props) {
                   action="/carteira/grupos"
                   style={{ display: "flex", gap: 12 }}
                 >
+                  <input type="hidden" name="gerente" value={gerenteFiltro} />
                   <input type="hidden" name="supervisor" value={supervisorFiltro} />
                   <input type="hidden" name="representante" value={representanteFiltro} />
                   <input type="hidden" name="filtro" value={filtroGrupo} />
@@ -1415,6 +1502,7 @@ export default async function VisaoGrupos({ searchParams }: Props) {
                           "Código",
                           "Empresa",
                           "Situação",
+                          "Receita Federal",
                           "Última compra",
                           "Limite disponível",
                           "Financeiro",
@@ -1440,6 +1528,7 @@ export default async function VisaoGrupos({ searchParams }: Props) {
 </div>
                           </td>
                           <td style={td}>{status(c)}</td>
+                          <td style={td}>{c.situacaoEmpresa || "NAO VERIFICADA"}</td>
                           <td style={td}>{dataBR(c.ultimaCompra)}</td>
                           <td style={td}>
                             {moeda(Number(c.limiteDisponivel) || 0)}

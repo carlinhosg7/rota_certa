@@ -1,9 +1,17 @@
+import { calcularPrioridadeCliente } from "@/lib/prioridade-cliente";
+import { obterPrioridade } from "@/lib/prioridade-cliente-db";
+import { MessageCircle, Phone, Mail, MapPin } from "lucide-react";
 import Link from "next/link";
+import { calcularJanelaCompraFaturamento } from "@/lib/janela-compra-faturamento";
 import { redirect } from "next/navigation";
 import { cookies } from "next/headers";
 
 import { validarToken } from "@/lib/auth";
 import ResultadoAtendimento from "@/components/ResultadoAtendimento";
+import ClassificacaoCliente from "@/components/ClassificacaoCliente";
+import { obterClassificacoes } from "@/lib/classificacoes-db";
+import { carregarCarteira2027 } from "@/lib/carteira-2027-data";
+import type { CodigoClassificacao } from "@/lib/classificacoes";
 import {
   getData,
   getIndiceVendas,
@@ -107,6 +115,39 @@ export default async function ClientePage({ params }: Props) {
         (a.data?.getTime() || 0)
     );
 
+  
+  const vendasLimite360 = vendas
+    .filter(v => cleanCode(v.codigo) === codigoLimpo)
+    .sort((a, b) => {
+      const da = (a.dataEntrega ?? a.data)?.getTime() ?? 0;
+      const db = (b.dataEntrega ?? b.data)?.getTime() ?? 0;
+      return db - da;
+    });
+
+  const obterLimite360 = (
+    campo: "limiteAprovado" | "limiteCredito" | "limiteDisponivel"
+  ): number | null => {
+    for (const v of vendasLimite360) {
+      const valor = v[campo];
+
+      if (valor !== null && valor !== undefined) {
+        return valor;
+      }
+    }
+    return null;
+  };
+
+  const limiteAprovado360 = obterLimite360("limiteAprovado");
+  const limiteCredito360 = obterLimite360("limiteCredito");
+  const limiteDisponivel360 = obterLimite360("limiteDisponivel");
+const janelaComercial = await calcularJanelaCompraFaturamento(
+    codigoLimpo,
+    vendas.filter(v => cleanCode(v.codigo) === codigoLimpo)
+  );
+  const maximoJanela = Math.max(
+    1,
+    ...janelaComercial.meses.flatMap(m => [m.entradas, m.faturamentos])
+  );
   const hoje = new Date();
 
   const inicioAno = new Date(
@@ -764,6 +805,44 @@ export default async function ClientePage({ params }: Props) {
     statusFundo = "#fff4ce";
   }
 
+  /* RECEITA E SUBCLASSIFICACOES 2027 */
+  // Mesma carteira usada no painel da Receita. Nao altera os indicadores existentes.
+  const carteira2027 = await carregarCarteira2027();
+  const cadastro2027 = carteira2027.clientes.find(
+    (c) => cleanCode(c.codigoCliente) === codigoLimpo
+  );
+  const contatos360 = cadastro2027?.contatos ?? [];
+  const endereco360 = cadastro2027
+    ? [
+        [cadastro2027.endereco, cadastro2027.numeroEndereco].filter(Boolean).join(", "),
+        cadastro2027.bairro,
+        [cadastro2027.cidade || cliente.cidade, cadastro2027.uf || cliente.uf].filter(Boolean).join(" / "),
+      ].filter(Boolean).join(" - ")
+    : "";
+  const situacaoReceita = cadastro2027?.situacaoEmpresa || "NAO_VERIFICADA";
+  const encerrada = situacaoReceita.toUpperCase() === "BAIXADA";
+  const sugeridas: CodigoClassificacao[] = [];
+  if (!encerrada) {
+    if (cliente.bloqueio?.toUpperCase().includes("BLOQUE")) sugeridas.push("BLOQUEADA");
+    if (["INAPTA", "SUSPENSA", "NAO LOCALIZADO", "PENDENTE FORMATO", "NAO_VERIFICADA", "NAO VERIFICADA"].includes(situacaoReceita.toUpperCase()))
+      sugeridas.push("CADASTRO_VALIDAR");
+    if (produtosPotenciais.some(p => p.potencial === "ALTO")) sugeridas.push("POTENCIAL_EXPANSAO");
+    const inicioAnterior = new Date(hoje.getFullYear()-1, 0, 1);
+    const fimAnterior = new Date(hoje.getFullYear()-1, hoje.getMonth(), hoje.getDate(), 23, 59, 59);
+    const valorAnterior = vendasCliente.filter(v => v.data && v.data >= inicioAnterior && v.data <= fimAnterior)
+      .reduce((s,v) => s + (v.vlr || 0), 0);
+    if (valorAnterior > 0 && valorAno < valorAnterior * 0.75) sugeridas.push("REDUCAO_COMPRA");
+  }
+  // Escolhas humanas gravadas prevalecem sobre sugestoes; [] significa desmarcou tudo.
+  const prioridadeCalculada = calcularPrioridadeCliente(
+    vendas.filter(v => cleanCode(v.codigo) === codigoLimpo),
+    limiteDisponivel360
+  );
+
+  const prioridadeGravada = await obterPrioridade(codigoLimpo);
+  const gravadas = await obterClassificacoes(codigoLimpo);
+  const iniciais = gravadas === null ? sugeridas : gravadas;
+
   // ============================================================
   // TELA
   // ============================================================
@@ -858,7 +937,64 @@ export default async function ClientePage({ params }: Props) {
             />
 
           </div>
+
+          <div style={{ borderTop: "1px solid #f0c88f", marginTop: 22, paddingTop: 20 }}>
+            <h3 style={{ fontSize: 16, margin: "0 0 14px" }}>Contato e localização</h3>
+            {contatos360.length ? contatos360.map((contato, indice) => {
+              const fone = contato.telefone.replace(/\D/g, "");
+              const zap = contato.whatsapp.replace(/\D/g, "");
+              const telefoneBrasil = (n: string) => n.length === 10 || n.length === 11 ? `55${n}` : n;
+              const zapValido = zap.length >= 10 && zap.length <= 13;
+              const foneValido = fone.length >= 10 && fone.length <= 13;
+              const emailValido = /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(contato.email);
+              const mensagem = encodeURIComponent(`Olá! Sou da equipe comercial Kidy e gostaria de conversar sobre oportunidades para ${cliente.razao}.`);
+              return (
+                <div key={`${indice}-${contato.nome}-${contato.email}`} style={{ background: "#fff7eb", padding: 14, borderRadius: 12, marginBottom: 10 }}>
+                  <div style={styles.infoGrid}>
+                    <Info titulo="Responsável / cargo" valor={[contato.nome, contato.cargo].filter(Boolean).join(" — ") || "Não informado"} />
+                    <Info titulo="Telefone" valor={contato.telefone || "Não informado"} />
+                    <Info titulo="WhatsApp" valor={contato.whatsapp || "Não informado"} />
+                    <Info titulo="E-mail" valor={contato.email || "Não informado"} />
+                  </div>
+                  <div style={{ display: "flex", flexWrap: "wrap", gap: 12, marginTop: 12 }}>
+                    {zapValido && <a href={`https://wa.me/${telefoneBrasil(zap)}?text=${mensagem}`} target="_blank" rel="noopener noreferrer" style={{ display: "inline-flex", alignItems: "center", gap: 6, fontWeight: 700, textDecoration: "none" }}><MessageCircle size={17} color="#25D366" /><span>WhatsApp</span></a>}
+                    {foneValido && <a href={`tel:+${telefoneBrasil(fone)}`} style={{ display: "inline-flex", alignItems: "center", gap: 6, fontWeight: 700, textDecoration: "none" }}><Phone size={17} color="#16803C" /><span>Ligar</span></a>}
+                    {emailValido && <a href={`mailto:${contato.email}?subject=${encodeURIComponent("Contato comercial Kidy")}`} style={{ display: "inline-flex", alignItems: "center", gap: 6, fontWeight: 700, textDecoration: "none" }}><Mail size={17} color="#2563EB" /><span>E-mail</span></a>}
+                  </div>
+                </div>
+              );
+            }) : <p style={{ color: "#94602e" }}>Nenhum contato cadastrado na base do Drive.</p>}
+            <div style={{ marginTop: 14 }}>
+              <Info titulo="Endereço" valor={endereco360 || "Não informado"} />
+              {endereco360 && <a href={`https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(endereco360)}`} target="_blank" rel="noopener noreferrer" style={{ display: "inline-block", marginTop: 10 }}><span style={{ display: "inline-flex", alignItems: "center", gap: 6, fontWeight: 700 }}><MapPin size={17} color="#EA4335" />Abrir rota no Google Maps</span></a>}
+            </div>
+            {(!contatos360.some(c => c.whatsapp) || !contatos360.some(c => c.email) || !endereco360) && (
+              <p style={{ marginTop: 12, fontSize: 12, color: "#9a5700" }}>Cadastro incompleto: verificar WhatsApp, e-mail ou endereço.</p>
+            )}
+          </div>
         </section>
+
+        <section style={styles.bloco}>
+          <div style={styles.blocoTitulo}>Situação cadastral — Receita Federal</div>
+          <div style={{fontSize:17,fontWeight:900,color:encerrada?"#b42318":"#3d2300"}}>
+            {situacaoReceita.replaceAll("_", " ")}
+          </div>
+          <p style={{fontSize:12,color:"#815326"}}>
+            {cadastro2027 ? `CNPJ: ${cadastro2027.cnpj || "não informado"}` : "Cliente não localizado na base cadastral 2027. Verificar vínculo pelo código."}
+          </p>
+          {encerrada && <p style={{fontWeight:800,color:"#b42318"}}>EMPRESA ENCERRADA — FORA DA FILA COMERCIAL. Histórico preservado.</p>}
+        </section>
+        <ClassificacaoCliente
+          codigo={codigoLimpo}
+          iniciais={iniciais}
+          sugeridas={sugeridas}
+          encerrada={encerrada || !cadastro2027}
+          prioridadeInicial={prioridadeGravada}
+          prioridadeSugerida={prioridadeCalculada.classificacao}
+          pontosPrioridade={prioridadeCalculada.pontos}
+          motivosPrioridade={prioridadeCalculada.motivos}
+          reativacao={prioridadeCalculada.reativacao}
+        />
 
         {/* CARDS */}
 
@@ -877,9 +1013,25 @@ export default async function ClientePage({ params }: Props) {
           />
 
           <Card
+            titulo="LIMITE APROVADO"
+            valor={limiteAprovado360 === null
+              ? "Não informado"
+              : moeda(limiteAprovado360)}
+            detalhe="Limite aprovado"
+          />
+
+          <Card
+            titulo="LIMITE DE CRÉDITO"
+            valor={limiteCredito360 === null
+              ? "Não informado"
+              : moeda(limiteCredito360)}
+            detalhe="Limite de crédito"
+          />
+
+          <Card
             titulo="LIMITE DISPONÍVEL"
-            valor={moeda(cliente.limite)}
-            detalhe="Limite financeiro"
+            valor={moeda(limiteDisponivel360 ?? cliente.limite)}
+            detalhe="Limite financeiro disponível"
           />
 
           <Card
@@ -899,6 +1051,298 @@ export default async function ClientePage({ params }: Props) {
             )} em vendas`}
           />
 
+        </section>
+
+
+        {/* INTELIGENCIA COMERCIAL 360 */}
+        <section style={styles.bloco}>
+          <div style={styles.blocoTitulo}>
+            Inteligência Comercial do Cliente
+          </div>
+
+          <div style={{
+            display: "grid",
+            gridTemplateColumns: "repeat(auto-fit, minmax(260px, 1fr))",
+            gap: 14,
+            marginTop: 16
+          }}>
+            <div style={{
+              background: "#fff7ed",
+              border: "1px solid #fed7aa",
+              borderRadius: 12,
+              padding: 16
+            }}>
+              <strong>COMPORTAMENTO DE COMPRA</strong>
+              <p style={{lineHeight: 1.7, fontSize: 13}}>
+                Última compra: {dataBR(ultimaCompra)}.
+                Histórico de {numero(paresHistorico)} pares,
+                equivalente a {moeda(valorHistorico)}.
+              </p>
+              <p style={{lineHeight: 1.7, fontSize: 13}}>
+                Em 2026: {numero(paresAno)} pares e
+                {" "}{moeda(valorAno)} em vendas.
+              </p>
+            </div>
+
+            <div style={{
+              background: "#fff7ed",
+              border: "1px solid #fed7aa",
+              borderRadius: 12,
+              padding: 16
+            }}>
+              <strong>CONDIÇÃO FINANCEIRA</strong>
+              <p style={{lineHeight: 1.7, fontSize: 13}}>
+                Situação: {cliente.bloqueio || "Não informada"}.
+              </p>
+              <p style={{lineHeight: 1.7, fontSize: 13}}>
+                Limite aprovado:{" "}
+                {limiteAprovado360 === null
+                  ? "Não informado"
+                  : moeda(limiteAprovado360)}.
+              </p>
+              <p style={{lineHeight: 1.7, fontSize: 13}}>
+                Limite disponível:{" "}
+                {moeda(limiteDisponivel360 ?? cliente.limite)}.
+              </p>
+            </div>
+
+            <div style={{
+              background: "#fff7ed",
+              border: "1px solid #fed7aa",
+              borderRadius: 12,
+              padding: 16
+            }}>
+              <strong>RECOMENDAÇÃO COMERCIAL</strong>
+              <p style={{lineHeight: 1.7, fontSize: 13}}>
+                Verificar a necessidade de reposição,
+                avaliar oportunidades de ampliação do mix
+                e programar o próximo contato comercial.
+                Confirmar a condição financeira atual
+                antes de formalizar novos pedidos.
+              </p>
+            </div>
+          </div>
+        </section>
+
+
+        {/* HISTÓRICO */}
+
+        <section style={styles.bloco}>
+
+          <div style={styles.blocoTitulo}>
+            <span style={styles.numeroSecao}>
+              02
+            </span>
+
+            Histórico comercial
+          </div>
+
+          <div style={{
+            marginTop: 22,
+            padding: 20,
+            background: "#ffffff",
+            border: "1px solid #e5e7eb",
+            borderRadius: 14
+          }}>
+            <h3 style={{ margin: "0 0 8px", fontSize: 18 }}>
+              Janela de Compra × Faturamento
+            </h3>
+            <p style={{ color: "#64748b", fontSize: 13 }}>
+              Quantidade de pares por mês: entrada pela Data Cadastro e faturamento pela Data Entrega.
+            </p>
+
+            {!janelaComercial.disponivel && janelaComercial.meses.every(m => m.entradas === 0 && m.faturamentos === 0) ? (
+              <p style={{ color: "#b45309" }}>
+                Sem datas de entrada ou faturamento disponíveis para este cliente.
+              </p>
+            ) : janelaComercial.meses.every(m => m.entradas === 0 && m.faturamentos === 0) ? (
+              <p style={{ color: "#64748b" }}>
+                Nenhum pedido correspondente encontrado entre
+                entrada e faturamento para este cliente.
+              </p>
+            ) : (
+              <>
+                <div style={{
+                  display: "flex",
+                  gap: 18,
+                  marginBottom: 18,
+                  flexWrap: "wrap",
+                  fontSize: 13
+                }}>
+                  <span style={{ color: "#2563eb" }}>■ Entrada de pares</span>
+                  <span style={{ color: "#16a34a" }}>■ Faturamento</span>
+                </div>
+
+                <div style={{
+                  display: "grid",
+                  gridTemplateColumns: "repeat(12, minmax(42px, 1fr))",
+                  gap: 8,
+                  overflowX: "auto",
+                  paddingBottom: 10
+                }}>
+                  {janelaComercial.meses.map(m => (
+                    <div key={m.mes} style={{ textAlign: "center" }}>
+                      <div style={{
+                        height: 120,
+                        display: "flex",
+                        alignItems: "flex-end",
+                        justifyContent: "center",
+                        gap: 3
+                      }}>
+                        <div
+                          title={`Entradas: ${m.entradas}`}
+                          style={{
+                            width: 15,
+                            height: `${Math.max(2, m.entradas / maximoJanela * 100)}%`,
+                            background: "#2563eb",
+                            borderRadius: "4px 4px 0 0"
+                          }}
+                        />
+                        <div
+                          title={`Faturamentos: ${m.faturamentos}`}
+                          style={{
+                            width: 15,
+                            height: `${Math.max(2, m.faturamentos / maximoJanela * 100)}%`,
+                            background: "#16a34a",
+                            borderRadius: "4px 4px 0 0"
+                          }}
+                        />
+                      </div>
+                      <div style={{ fontSize: 11, marginTop: 7 }}>
+                        {m.mes}
+                      </div>
+                    </div>
+                  ))}
+                </div>
+
+                <p style={{
+                  fontSize: 12,
+                  color: "#64748b",
+                  marginTop: 14
+                }}>
+                  {janelaComercial.pedidosComparados} pares de entrada.
+                  Faturamento disponível nos anos:{" "}
+                  {janelaComercial.anosFaturamento.join(", ")}.
+                  As barras representam a quantidade de pares por mês,
+                  não valores financeiros.
+                </p>
+              </>
+            )}
+          </div>
+
+          <div style={styles.historicoGrid}>
+
+            <Indicador
+              titulo="Pares no ano"
+              valor={numero(paresAno)}
+            />
+
+            <Indicador
+              titulo="Valor no ano"
+              valor={moeda(valorAno)}
+            />
+
+            <Indicador
+              titulo="Pares histórico"
+              valor={numero(paresHistorico)}
+            />
+
+            <Indicador
+              titulo="Valor histórico"
+              valor={moeda(valorHistorico)}
+            />
+
+          </div>
+
+                  </section>
+
+        {/* RESUMO ESCRITO DO HISTORICO COMERCIAL */}
+        <section style={styles.bloco}>
+          <div style={styles.blocoTitulo}>
+            Análise Escrita — Entrada × Faturamento
+          </div>
+
+          <p style={{fontSize: 13, lineHeight: 1.7}}>
+            A tabela apresenta pares por mês
+            de entrada e pares
+            por mês de faturamento, considerando os anos
+            disponíveis na base.
+          </p>
+
+          <div style={{overflowX: "auto", marginTop: 14}}>
+            <table style={{
+              width: "100%",
+              borderCollapse: "collapse",
+              fontSize: 13
+            }}>
+              <thead>
+                <tr style={{background: "#fff1db"}}>
+                  <th style={{padding: 10, textAlign: "left"}}>Mês</th>
+                  <th style={{padding: 10, textAlign: "right"}}>
+                    Entrada
+                  </th>
+                  <th style={{padding: 10, textAlign: "right"}}>
+                    Faturamento
+                  </th>
+                </tr>
+              </thead>
+              <tbody>
+                {janelaComercial.meses.map(m => (
+                  <tr key={`analise-${m.mes}`}
+                    style={{borderBottom: "1px solid #f0e0cd"}}>
+                    <td style={{padding: 10}}>{m.mes}</td>
+                    <td style={{padding: 10, textAlign: "right"}}>
+                      {numero(m.entradas)}
+                    </td>
+                    <td style={{padding: 10, textAlign: "right"}}>
+                      {numero(m.faturamentos)}
+                    </td>
+                  </tr>
+                ))}
+                <tr style={{fontWeight: 800, background: "#fff7ed"}}>
+                  <td style={{padding: 10}}>TOTAL</td>
+                  <td style={{padding: 10, textAlign: "right"}}>
+                    {numero(janelaComercial.meses.reduce(
+                      (s, m) => s + m.entradas, 0
+                    ))}
+                  </td>
+                  <td style={{padding: 10, textAlign: "right"}}>
+                    {numero(janelaComercial.meses.reduce(
+                      (s, m) => s + m.faturamentos, 0
+                    ))}
+                  </td>
+                </tr>
+              </tbody>
+            </table>
+          </div>
+
+          <p style={{
+            fontSize: 12,
+            lineHeight: 1.7,
+            marginTop: 12
+          }}>
+            <strong>Maior volume de entrada:</strong>{" "}
+            {[...janelaComercial.meses]
+              .filter(m => m.entradas > 0)
+              .sort((a, b) => b.entradas - a.entradas)
+              .slice(0, 1)
+              .map(m => `${m.mes} (${numero(m.entradas)} pares)`)
+              .join("") || "Sem registros"}.
+            {" "}
+            <strong>Maior volume de faturamento:</strong>{" "}
+            {[...janelaComercial.meses]
+              .filter(m => m.faturamentos > 0)
+              .sort((a, b) => b.faturamentos - a.faturamentos)
+              .slice(0, 1)
+              .map(m => `${m.mes} (${numero(m.faturamentos)} pares)`)
+              .join("") || "Sem registros"}.
+          </p>
+
+          <p style={{fontSize: 11, opacity: 0.7}}>
+            Um pedido faturado em meses diferentes pode ser
+            contado uma vez em cada mês. Os totais não
+            representam valores financeiros nem saldo em aberto.
+          </p>
         </section>
 
         {possuiReposicao && (
@@ -964,44 +1408,6 @@ export default async function ClientePage({ params }: Props) {
           </section>
         )}
 
-        {/* HISTÓRICO */}
-
-        <section style={styles.bloco}>
-
-          <div style={styles.blocoTitulo}>
-            <span style={styles.numeroSecao}>
-              02
-            </span>
-
-            Histórico comercial
-          </div>
-
-          <div style={styles.historicoGrid}>
-
-            <Indicador
-              titulo="Pares no ano"
-              valor={numero(paresAno)}
-            />
-
-            <Indicador
-              titulo="Valor no ano"
-              valor={moeda(valorAno)}
-            />
-
-            <Indicador
-              titulo="Pares histórico"
-              valor={numero(paresHistorico)}
-            />
-
-            <Indicador
-              titulo="Valor histórico"
-              valor={moeda(valorHistorico)}
-            />
-
-          </div>
-
-        </section>
-
         {/* MIX DE PRODUTOS */}
         <section style={styles.bloco}>
           <div style={styles.blocoTitulo}><span style={styles.numeroSecao}>03</span>Mix de produtos</div>
@@ -1024,6 +1430,7 @@ export default async function ClientePage({ params }: Props) {
           ) : <div style={styles.vazio}>Sem mix de produtos disponível para este cliente.</div>}
         </section>
 
+        {!encerrada && <>
         {/* OPORTUNIDADES */}
         <section style={styles.bloco}>
           <div style={styles.blocoTitulo}><span style={styles.numeroSecao}>04</span>Oportunidades comerciais</div>
@@ -1333,6 +1740,7 @@ export default async function ClientePage({ params }: Props) {
           </div>
           <div style={styles.preditivaIcone}>✦</div>
         </section>
+        </>}
 
       </div>
     </main>

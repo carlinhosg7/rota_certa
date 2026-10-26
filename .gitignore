@@ -53,3 +53,10 @@ backup-*/
 *.zip
 *.parquet
 !.env.example
+.env
+.env.local
+.env.production.local
+_backup_cliente_360/
+*.bak_*
+node_modules/
+.next/

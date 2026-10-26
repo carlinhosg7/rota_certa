@@ -1,3 +1,4 @@
+import { listarGerentesRegionais } from "@/lib/carteira-gerentes";
 import { carregarCarteira2027 } from "../../../lib/carteira-2027-data";
 import "server-only";
 
@@ -22,21 +23,26 @@ type Cliente = {
   carteira?: string;
   situacao?: string;
   faixa?: string;
-  dataUltimaCompra?: string;
+  ultimaCompra?: string;
   representantes?: Vinculo[];
+  representanteAtual?: Vinculo[];
+  demaisRepresentantes?: Vinculo[];
   supervisores?: Vinculo[];
   bloqueadoFinanceiro?: boolean;
   limiteDisponivel?: number;
   flags?: string[];
+  situacaoEmpresa?: string;
 };
 
 type Props = {
   searchParams: Promise<{
+    gerente?: string;
     filtro?: string;
     supervisor?: string;
     representante?: string;
     pagina?: string;
     busca?: string;
+    receita?: string;
   }>;
 };
 
@@ -81,6 +87,10 @@ export default async function ListaCarteira({ searchParams }: Props) {
   const supLogin = cod(u.codigo_supervisor);
 
   const params = await searchParams;
+  const gerenteFiltro = String(params.gerente ?? "").trim().toUpperCase();
+  const gerentesRegionais = await listarGerentesRegionais();
+  const gerentesDisponiveis = [...new Set(gerentesRegionais.map(g => g.gerente))].sort((a,b) => a.localeCompare(b, "pt-BR"));
+  const regionaisGerente = new Set(gerentesRegionais.filter(g => g.gerente === gerenteFiltro).map(g => cod(g.codigo_supervisor)));
   const filtro = titulos[params.filtro ?? ""]
     ? params.filtro!
     : "todos";
@@ -88,6 +98,8 @@ export default async function ListaCarteira({ searchParams }: Props) {
   const supervisor = cod(params.supervisor);
   const representante = cod(params.representante);
   const busca = String(params.busca ?? "").trim().slice(0, 100);
+  const situacoesReceita = ["ATIVA", "BAIXADA", "INAPTA", "SUSPENSA", "NAO LOCALIZADO", "PENDENTE FORMATO", "NAO VERIFICADA"];
+  const receita = situacoesReceita.includes(String(params.receita ?? "").toUpperCase()) ? String(params.receita).toUpperCase() : "";
 
 
 
@@ -107,7 +119,7 @@ export default async function ListaCarteira({ searchParams }: Props) {
   // Primeiro restringe os registros autorizados.
   if (perfil === "REPRESENTANTE") {
     clientes = clientes.filter(c =>
-      c.representantes?.some(r => cod(r.codigo) === repLogin)
+      c.representanteAtual?.some(r => cod(r.codigo) === repLogin)
     );
   } else if (perfil === "SUPERVISOR") {
     clientes = clientes.filter(c =>
@@ -115,6 +127,10 @@ export default async function ListaCarteira({ searchParams }: Props) {
     );
   } else if (!["ADMIN", "ADMINISTRADOR", "GERENTE"].includes(perfil)) {
     clientes = [];
+  }
+
+  if (gerenteFiltro) {
+    clientes = clientes.filter(c => c.supervisores?.some(s => regionaisGerente.has(cod(s.codigo))));
   }
 
   if (supervisor) {
@@ -125,7 +141,7 @@ export default async function ListaCarteira({ searchParams }: Props) {
 
   if (representante) {
     clientes = clientes.filter(c =>
-      c.representantes?.some(r => cod(r.codigo) === representante)
+      c.representanteAtual?.some(r => cod(r.codigo) === representante)
     );
   }
 
@@ -158,6 +174,11 @@ export default async function ListaCarteira({ searchParams }: Props) {
       c.faixa === "ACIMA_60_MESES"
     );
   }
+  // PAINEL_RECEITA_2027
+  if (receita) {
+    clientes = clientes.filter(c => String(c.situacaoEmpresa || "NAO VERIFICADA").replaceAll("_", " ").toUpperCase() === receita);
+  }
+
   if (busca) {
     const termo = normalizar(busca);
     clientes = clientes.filter(c =>
@@ -194,9 +215,11 @@ export default async function ListaCarteira({ searchParams }: Props) {
   function urlPagina(numero: number) {
     const q = new URLSearchParams();
     q.set("filtro", filtro);
+    if (gerenteFiltro) q.set("gerente", gerenteFiltro);
     if (supervisor) q.set("supervisor", supervisor);
     if (representante) q.set("representante", representante);
     if (busca) q.set("busca", busca);
+    if (receita) q.set("receita", receita);
     q.set("pagina", String(numero));
     return `/carteira/clientes?${q}`;
   }
@@ -237,6 +260,13 @@ export default async function ListaCarteira({ searchParams }: Props) {
             }}
           >
             <input type="hidden" name="filtro" value={filtro} />
+             <label style={{display: "grid", gap: 5, fontSize: 12}}>
+               Gerente
+               <select name="gerente" defaultValue={gerenteFiltro} style={{padding: 12, border: "1px solid #cbd5e1", borderRadius: 9}}>
+                 <option value="">Todos</option>
+                 {gerentesDisponiveis.map(g => <option key={g} value={g}>{g}</option>)}
+               </select>
+             </label>
             <input
               type="hidden"
               name="supervisor"
@@ -247,6 +277,14 @@ export default async function ListaCarteira({ searchParams }: Props) {
               name="representante"
               value={representante}
             />
+
+            <label style={{display: "grid", gap: 5, fontSize: 12}}>
+              Situação Receita
+              <select name="receita" defaultValue={receita} style={{padding: 12, border: "1px solid #cbd5e1", borderRadius: 9}}>
+                <option value="">Todas</option>
+                {situacoesReceita.map(st => <option key={st} value={st}>{st}</option>)}
+              </select>
+            </label>
 
             <input
               name="busca"
@@ -292,9 +330,11 @@ export default async function ListaCarteira({ searchParams }: Props) {
                     "Código",
                     "Cliente",
                     "Grupo",
-                    "Representante",
+                    "Representante Atual",
+                    "Demais Representantes",
                     "Última compra",
                     "Situação",
+                    "Receita Federal",
                     "Ação"
                   ].map(t => (
                     <th
@@ -328,15 +368,25 @@ export default async function ListaCarteira({ searchParams }: Props) {
                         {c.grupoCliente || "—"}
                       </td>
                       <td style={{ padding: 12 }}>
-                        {(c.representantes || [])
+                        {(c.representanteAtual || [])
                           .map(r => r.nome || r.codigo)
                           .join(", ") || "—"}
                       </td>
                       <td style={{ padding: 12 }}>
-                        {c.dataUltimaCompra || "—"}
+                        {(c.demaisRepresentantes || [])
+                          .map(r => r.nome || r.codigo)
+                          .join(", ") || "—"}
+                      </td>
+                      <td style={{ padding: 12 }}>
+                        {c.ultimaCompra
+                          ? c.ultimaCompra.split("-").reverse().join("/")
+                          : "—"}
                       </td>
                       <td style={{ padding: 12 }}>
                         {c.situacao || c.carteira || "—"}
+                      </td>
+                      <td style={{ padding: 12, fontWeight: 700 }}>
+                        {c.situacaoEmpresa || "NAO VERIFICADA"}
                       </td>
                       <td style={{ padding: 12 }}>
                         {codigo ? (

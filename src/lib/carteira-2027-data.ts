@@ -1,3 +1,8 @@
+import {
+  carregarSituacoesReceita,
+  consultarSituacaoReceita,
+} from "./carteira-2027-receita";
+
 import * as XLSX from "xlsx";
 import {
   atualizarCatalogoDrive,
@@ -11,8 +16,22 @@ type Pessoa = {
   nome: string;
 };
 
+export type ContatoCarteira = {
+  nome: string;
+  cargo: string;
+  telefone: string;
+  whatsapp: string;
+  email: string;
+};
+
 export type ClienteCarteira = {
   codigoCliente: string;
+  contatos: ContatoCarteira[];
+  endereco: string;
+  numeroEndereco: string;
+  bairro: string;
+  cidade: string;
+  uf: string;
   razaoSocial: string;
   cnpj: string;
   grupoCliente: string;
@@ -23,6 +42,8 @@ export type ClienteCarteira = {
   faixa: string;
   mesesSemCompra: number | null;
   representantes: Pessoa[];
+  representanteAtual: Pessoa[];
+  demaisRepresentantes: Pessoa[];
   supervisores: Pessoa[];
   bloqueadoFinanceiro: boolean;
   limiteDisponivel: number;
@@ -34,7 +55,43 @@ export type ClienteCarteira = {
   acompanhamento: Record<string, unknown>;
 };
 
-const ARQUIVO = "DADOS PRETIVIA CLIENTES.xlsx";
+const ARQUIVO = "DADOS PREDITIVA CLIENTES.xlsx";
+
+type CadastroVigente = { razao: string; representantes: Set<string>; supervisores: Set<string> };
+
+async function lerCadastroVigente(): Promise<Map<string, CadastroVigente>> {
+  const buffer = await lerArquivoComercial("base clientes.xlsx");
+  const wb = XLSX.read(buffer, { type: "buffer" });
+  const ws = wb.Sheets[wb.SheetNames[0]];
+  const linhas = XLSX.utils.sheet_to_json<unknown[]>(ws, { header: 1, defval: "" });
+  const norm = (v: unknown) => texto(v).normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "").trim().toUpperCase();
+  const idx = linhas.findIndex(l => l.some(v => norm(v) === "CODIGO CLIENTE")
+    && l.some(v => norm(v) === "CODIGO REPRESENTANTE"));
+  if (idx < 0) throw new Error("CabeÃ§alho da base clientes.xlsx nÃ£o encontrado");
+  const colunas = linhas[idx].map(norm);
+  const coluna = (nome: string) => colunas.indexOf(nome);
+  const idCol = coluna("CODIGO CLIENTE");
+  const repCol = coluna("CODIGO REPRESENTANTE");
+  const razaoCol = coluna("RAZAO SOCIAL");
+  const supCol = coluna("CODIGO SUPERVISOR");
+  if (razaoCol < 0) throw new Error("Coluna Razao Social nÃ£o encontrada no cadastro");
+  const mapa = new Map<string, CadastroVigente>();
+  for (const linha of linhas.slice(idx + 1)) {
+    const id = codigo(linha[idCol]);
+    if (!id) continue;
+    const razao = texto(linha[razaoCol]);
+    const rep = codigo(linha[repCol]);
+    const sup = supCol >= 0 ? codigo(linha[supCol]) : "";
+    if (!mapa.has(id)) mapa.set(id, { razao, representantes: new Set(), supervisores: new Set() });
+    const c = mapa.get(id)!;
+    if (razao && !c.razao) c.razao = razao;
+    if (rep) c.representantes.add(rep);
+    if (sup) c.supervisores.add(sup);
+  }
+  return mapa;
+}
+
 
 function texto(v: unknown): string {
   return v == null ? "" : String(v).trim();
@@ -174,12 +231,13 @@ type Acumulado = Omit<
   "situacao" | "faixa" | "mesesSemCompra" |
   "flags" | "acompanhamento" |
   "situacaoEmpresa" | "compraFaturadaConfirmada" |
-  "classificacaoProvisoria"
+  "classificacaoProvisoria" | "representanteAtual" | "demaisRepresentantes"
 > & {
   ultimaCompra: string | null;
   representantes: Map<string, string>;
   supervisores: Map<string, string>;
   cadastroDivergente: boolean;
+  chavesContato: Set<string>;
 };
 
 let cache:
@@ -228,6 +286,7 @@ async function processar() {
       cabecalho.map((campo, i) => [campo, linha[i] ?? ""])
     ));
 
+  const cadastroVigente = await lerCadastroVigente();
   const mapa = new Map<string, Acumulado>();
 
   for (const r of registros) {
@@ -242,6 +301,13 @@ async function processar() {
     if (!mapa.has(id)) {
       mapa.set(id, {
         codigoCliente: id,
+        contatos: [],
+        endereco: "",
+        numeroEndereco: "",
+        bairro: "",
+        cidade: "",
+        uf: "",
+        chavesContato: new Set<string>(),
         razaoSocial: texto(r["Razao Social Empresa"]),
         cnpj: texto(r["Cnpj"]),
         grupoCliente: grupo,
@@ -257,6 +323,27 @@ async function processar() {
     }
 
     const c = mapa.get(id)!;
+
+    // Dados cadastrais importados do Drive, consolidados pelo Codigo Cliente.
+    c.endereco ||= texto(r["Endereco"]);
+    c.numeroEndereco ||= texto(r["Endereco Num"]);
+    c.bairro ||= texto(r["Bairro"]);
+    c.cidade ||= texto(r["Cidade"]);
+    c.uf ||= texto(r["Uf"]);
+
+    const contato: ContatoCarteira = {
+      nome: texto(r["Nome Contato"]),
+      cargo: texto(r["Cargo Contato"]),
+      telefone: texto(r["Telefone Contato"]) || texto(r["Telefone"]),
+      whatsapp: texto(r["Whatsapp"]),
+      email: texto(r["Email Contato"]) || texto(r["Email"]),
+    };
+    const chaveContato = [contato.nome, contato.cargo, contato.telefone, contato.whatsapp, contato.email]
+      .map(x => x.trim().toLowerCase()).join("|");
+    if (chaveContato.replace(/\|/g, "") && !c.chavesContato.has(chaveContato)) {
+      c.contatos.push(contato);
+      c.chavesContato.add(chaveContato);
+    }
 
     if (ultima && (!c.ultimaCompra || ultima > c.ultimaCompra)) {
       c.ultimaCompra = ultima;
@@ -300,7 +387,13 @@ async function processar() {
 
     clientes.push({
       codigoCliente: c.codigoCliente,
-      razaoSocial: c.razaoSocial,
+      contatos: c.contatos,
+      endereco: c.endereco,
+      numeroEndereco: c.numeroEndereco,
+      bairro: c.bairro,
+      cidade: c.cidade,
+      uf: c.uf,
+      razaoSocial: cadastroVigente.get(c.codigoCliente)?.razao || c.razaoSocial,
       cnpj: c.cnpj,
       grupoCliente: c.grupoCliente,
       codigoGrupoCliente: c.codigoGrupoCliente,
@@ -309,6 +402,11 @@ async function processar() {
       representantes: [...c.representantes].map(
         ([codigo, nome]) => ({ codigo, nome })
       ),
+      representanteAtual: [...(cadastroVigente.get(c.codigoCliente)?.representantes ?? new Set<string>())]
+        .map(codigo => ({ codigo, nome: c.representantes.get(codigo) || codigo })),
+      demaisRepresentantes: [...c.representantes]
+        .filter(([codigo]) => !cadastroVigente.get(c.codigoCliente)?.representantes.has(codigo))
+        .map(([codigo, nome]) => ({ codigo, nome })),
       supervisores: [...c.supervisores].map(
         ([codigo, nome]) => ({ codigo, nome })
       ),
@@ -370,6 +468,15 @@ async function processar() {
     ).length,
     statusValidacao: "PROVISORIO_SEM_CONFIRMACAO_FATURAMENTO",
   };
+
+  const situacoesReceita = await carregarSituacoesReceita();
+
+  for (const cliente of clientes) {
+    cliente.situacaoEmpresa = consultarSituacaoReceita(
+      situacoesReceita,
+      cliente.cnpj
+    );
+  }
 
   return { clientes, resumo };
 }

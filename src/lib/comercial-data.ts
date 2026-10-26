@@ -84,6 +84,10 @@ export type Venda = {
   rep: string;
   sup: string;
   data: Date | null;
+  dataEntrega: Date | null;
+  limiteAprovado: number | null;
+  limiteCredito: number | null;
+  limiteDisponivel: number | null;
   qtd: number;
   vlr: number;
   codigoLinha: string;
@@ -1160,6 +1164,20 @@ export function sugerirRota(
   return ordenadas;
 }
 
+function numeroCredito360(v: unknown): number | null {
+  if (v === null || v === undefined) return null;
+
+  const texto = String(v).trim();
+  if (!texto) return null;
+
+  const limpo = texto.replace(/R\$/gi, "").replace(/\s/g, "");
+  const normalizado = limpo.includes(",")
+    ? limpo.replace(/\./g, "").replace(",", ".")
+    : limpo;
+
+  const n = Number(normalizado);
+  return Number.isFinite(n) ? n : null;
+}
 async function carregarVendas(): Promise<Venda[]> {
   const files = fs
     .readdirSync(pastaParquets())
@@ -1180,6 +1198,10 @@ async function carregarVendas(): Promise<Venda[]> {
     "Codigo Representante",
     "Codigo Supervisor",
     "Data Cadastro",
+ "Data Entrega",
+ "Limite Aprovado",
+ "Limite Credito",
+ "Limite Disponivel",
     "Codigo Linha",
     "Linha",
     "Referencia",
@@ -1245,6 +1267,10 @@ async function carregarVendas(): Promise<Venda[]> {
           rep,
           sup,
           data: d,
+          dataEntrega: date(r["Data Entrega"]),
+          limiteAprovado: numeroCredito360(r["Limite Aprovado"]),
+          limiteCredito: numeroCredito360(r["Limite Credito"]),
+          limiteDisponivel: numeroCredito360(r["Limite Disponivel"]),
           qtd: number(r["Qtd Venda"]),
           vlr: number(r["Vlr Venda"]),
           codigoLinha: cleanCode(r["Codigo Linha"]),

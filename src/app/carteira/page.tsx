@@ -1,3 +1,4 @@
+import { listarGerentesRegionais } from "@/lib/carteira-gerentes";
 import { carregarCarteira2027 } from "../../lib/carteira-2027-data";
 import "server-only";
 
@@ -28,6 +29,8 @@ type Cliente = {
   bloqueadoFinanceiro: boolean;
   limiteDisponivel: number;
   classificacaoProvisoria: boolean;
+  situacaoEmpresa: string;
+  cnpj: string;
 };
 
 type Resumo = {
@@ -40,8 +43,10 @@ type Resumo = {
 
 type Props = {
   searchParams: Promise<{
+    gerente?: string;
     supervisor?: string;
     representante?: string;
+    receita?: string;
   }>;
 };
 
@@ -66,9 +71,11 @@ function cartao(
   cor = "#172b4d",
   filtro = "todos",
   supervisor = "",
-  representante = ""
+  representante = "",
+  gerente = ""
 ) {
   const params = new URLSearchParams({ filtro });
+  if (gerente) params.set("gerente", gerente);
   if (supervisor) params.set("supervisor", supervisor);
   if (representante) params.set("representante", representante);
 
@@ -138,6 +145,10 @@ export default async function CarteiraPage({
   const supLogin = codigo(sessao.codigo_supervisor);
 
   const parametros = await searchParams;
+  const gerenteFiltro = String(parametros.gerente ?? "").trim().toUpperCase();
+  const gerentesRegionais = await listarGerentesRegionais();
+  const gerentesDisponiveis = [...new Set(gerentesRegionais.map(g => g.gerente))].sort((a,b) => a.localeCompare(b, "pt-BR"));
+  const regionaisGerente = new Set(gerentesRegionais.filter(g => g.gerente === gerenteFiltro).map(g => codigo(g.codigo_supervisor)));
 
   let clientes: Cliente[] = [];
   let resumo: Resumo | null = null;
@@ -166,6 +177,10 @@ export default async function CarteiraPage({
     erroBase = "Perfil sem permissão configurada para esta carteira.";
   }
 
+  if (gerenteFiltro) {
+    clientes = clientes.filter(c => c.supervisores?.some(s => regionaisGerente.has(codigo(s.codigo))));
+  }
+
   const supervisores = new Map<string, string>();
   const representantes = new Map<string, string>();
 
@@ -181,6 +196,7 @@ export default async function CarteiraPage({
 
   const supervisorFiltro = codigo(parametros.supervisor);
   const representanteFiltro = codigo(parametros.representante);
+  const receitaFiltro = String(parametros.receita ?? "").toUpperCase();
 
   if (supervisorFiltro) {
     clientes = clientes.filter(c =>
@@ -196,6 +212,24 @@ export default async function CarteiraPage({
         codigo(r.codigo) === representanteFiltro
       )
     );
+  }
+
+  // PAINEL_RECEITA_2027: contagem por cliente e Grupo Cliente distinto.
+  const clientesEscopo = clientes;
+  const situacoesReceita = ["ATIVA", "BAIXADA", "INAPTA", "SUSPENSA", "NAO LOCALIZADO", "PENDENTE FORMATO", "NAO VERIFICADA"];
+  const receitaValida = situacoesReceita.includes(receitaFiltro) ? receitaFiltro : "";
+  const indicadoresReceita = situacoesReceita.map(situacao => {
+    const encontrados = clientesEscopo.filter(c =>
+      String(c.situacaoEmpresa || "NAO VERIFICADA").replaceAll("_", " ").toUpperCase() === situacao
+    );
+    const grupos = new Set(encontrados.map(c => String(c.grupoCliente || "").trim().toUpperCase()).filter(Boolean));
+    return { situacao, clientes: encontrados.length, grupos: grupos.size };
+  });
+  const riscoReceita = clientesEscopo.filter(c =>
+    ["BAIXADA", "INAPTA"].includes(String(c.situacaoEmpresa || "").toUpperCase()) && Number(c.limiteDisponivel) > 0
+  ).length;
+  if (receitaValida) {
+    clientes = clientes.filter(c => String(c.situacaoEmpresa || "NAO VERIFICADA").replaceAll("_", " ").toUpperCase() === receitaValida);
   }
 
   const total = clientes.length;
@@ -257,8 +291,10 @@ export default async function CarteiraPage({
 
   const query = new URLSearchParams();
 
+  if (gerenteFiltro) query.set("gerente", gerenteFiltro);
   if (supervisorFiltro) query.set("supervisor", supervisorFiltro);
   if (representanteFiltro) query.set("representante", representanteFiltro);
+  if (receitaValida) query.set("receita", receitaValida);
 
   const urlAtual = `/carteira${query.size ? `?${query}` : ""}`;
 
@@ -349,6 +385,13 @@ export default async function CarteiraPage({
                   marginBottom: 22
                 }}
               >
+                 <label style={{display: "grid", gap: 6}}>
+                   <span style={{fontSize: 12}}>Gerente</span>
+                   <select name="gerente" defaultValue={gerenteFiltro} style={{padding: 10, minWidth: 190}}>
+                     <option value="">Todos</option>
+                     {gerentesDisponiveis.map(g => <option key={g} value={g}>{g}</option>)}
+                   </select>
+                 </label>
                 <label style={{display: "grid", gap: 6}}>
                   <span style={{fontSize: 12}}>Supervisor</span>
                   <select
@@ -385,6 +428,14 @@ export default async function CarteiraPage({
                   </select>
                 </label>
 
+                <label style={{display: "grid", gap: 6}}>
+                  <span style={{fontSize: 12}}>Situação Receita Federal</span>
+                  <select name="receita" defaultValue={receitaValida} style={{padding: 10, minWidth: 190}}>
+                    <option value="">Todas</option>
+                    {situacoesReceita.map(st => <option key={st} value={st}>{st}</option>)}
+                  </select>
+                </label>
+
                 <button type="submit" style={{
                   padding: "11px 18px",
                   border: 0,
@@ -404,6 +455,30 @@ export default async function CarteiraPage({
                 </Link>
               </form>
 
+              {/* PAINEL_RECEITA_2027 */}
+              <section style={{background: "#fff", border: "1px solid #e2e8f0", borderRadius: 16, padding: 20, marginBottom: 22}}>
+                <h2 style={{fontSize: 18, marginBottom: 8}}>Situação cadastral — Receita Federal</h2>
+                <p style={{fontSize: 12, color: "#64748b", marginBottom: 15}}>
+                  Contagem de clientes por Código Cliente e grupos distintos por Grupo Cliente. Independente da classificação comercial.
+                </p>
+                <div style={{display: "grid", gridTemplateColumns: "repeat(auto-fit,minmax(150px,1fr))", gap: 10}}>
+                  {indicadoresReceita.map(item => {
+                    const q = new URLSearchParams({receita: item.situacao});
+                    if (gerenteFiltro) q.set("gerente", gerenteFiltro);
+                     if (supervisorFiltro) q.set("supervisor", supervisorFiltro);
+                    if (representanteFiltro) q.set("representante", representanteFiltro);
+                    return <Link key={item.situacao} href={`/carteira/clientes?${q}`} style={{textDecoration: "none", color: "inherit", padding: 14, border: "1px solid #e2e8f0", borderRadius: 12}}>
+                      <div style={{fontSize: 12, fontWeight: 700}}>{item.situacao}</div>
+                      <div style={{fontSize: 24, fontWeight: 800}}>{inteiro(item.clientes)}</div>
+                      <div style={{fontSize: 12, color: "#64748b"}}>{inteiro(item.grupos)} grupos</div>
+                    </Link>;
+                  })}
+                </div>
+                <p style={{marginTop: 15, fontSize: 13, color: "#b91c1c", fontWeight: 700}}>
+                  Atenção: {inteiro(riscoReceita)} clientes com CNPJ baixado ou inapto e limite disponível.
+                </p>
+              </section>
+
               <div style={{
                 display: "grid",
                 gridTemplateColumns:
@@ -413,38 +488,38 @@ export default async function CarteiraPage({
                 {cartao(
                   "Clientes na carteira",
                   inteiro(total),
-                  `${inteiro(grupos)} grupos distintos`
+                  `${inteiro(grupos)} grupos distintos`, "#172b4d", "todos", supervisorFiltro, representanteFiltro, gerenteFiltro
                 )}
 
                 {cartao(
                   "Carteira 01 — Ativa",
                   inteiro(ativos),
                   percentual(ativos, total),
-                  "#15803d", "ativa", supervisorFiltro, representanteFiltro)}
+                  "#15803d", "ativa", supervisorFiltro, representanteFiltro, gerenteFiltro)}
 
                 {cartao(
                   "Carteira 02 — Reativação",
                   inteiro(reativacao),
                   percentual(reativacao, total),
-                  "#b45309", "reativacao", supervisorFiltro, representanteFiltro)}
+                  "#b45309", "reativacao", supervisorFiltro, representanteFiltro, gerenteFiltro)}
 
                 {cartao(
                   "Pendentes de qualificação",
                   inteiro(pendentes),
                   "Sem última compra válida",
-                  "#7c3aed", "pendentes", supervisorFiltro, representanteFiltro)}
+                  "#7c3aed", "pendentes", supervisorFiltro, representanteFiltro, gerenteFiltro)}
 
                 {cartao(
                   "Bloqueio financeiro",
                   inteiro(bloqueados),
                   "Clientes que exigem atenção",
-                  "#b91c1c", "bloqueados", supervisorFiltro, representanteFiltro)}
+                  "#b91c1c", "bloqueados", supervisorFiltro, representanteFiltro, gerenteFiltro)}
 
                 {cartao(
                   "Com limite disponível",
                   inteiro(limite),
                   "Não significa ausência de pedido",
-                  "#0369a1", "limite", supervisorFiltro, representanteFiltro)}
+                  "#0369a1", "limite", supervisorFiltro, representanteFiltro, gerenteFiltro)}
               </div>
 
               <section style={{
@@ -538,7 +613,8 @@ export default async function CarteiraPage({
       : f.nome === "37 a 60 meses"
       ? "37a60"
       : "acima60",
-    ...(supervisorFiltro ? { supervisor: supervisorFiltro } : {}),
+    ...(gerenteFiltro ? { gerente: gerenteFiltro } : {}),
+     ...(supervisorFiltro ? { supervisor: supervisorFiltro } : {}),
     ...(representanteFiltro ? { representante: representanteFiltro } : {})
   }).toString()}`}
   style={{

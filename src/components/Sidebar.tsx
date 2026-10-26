@@ -21,6 +21,7 @@ export default function Sidebar({ nome, perfil, usuario }: Props) {
   }
 
   const itens = [
+
     { titulo: "Visão Comercial", href: "/dashboard#planejamento", rota: "/dashboard" },
     { titulo: "Venda Mais+", href: "/dashboard#venda-mais", rota: "" },
     { titulo: "Análise Preditiva", href: "/dashboard#clientes", rota: "" },
@@ -74,6 +75,19 @@ export default function Sidebar({ nome, perfil, usuario }: Props) {
             </Link>
           );
         })}
+
+        <Link
+          href="/reativacao"
+          style={{
+            ...estiloLink(pathname === "/reativacao"),
+            marginLeft: 22,
+            paddingLeft: 14,
+            fontSize: 12,
+            borderLeft: "2px solid #f97316",
+          }}
+        >
+          ↳ Ranking de Reativação
+        </Link>
 
         {perfil.toUpperCase() === "ADMIN" && (
           <>

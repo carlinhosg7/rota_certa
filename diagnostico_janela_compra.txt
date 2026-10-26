@@ -1,0 +1,166 @@
+
+============================================================
+BASE: DADOS_PREDITIVA
+
+ARQUIVO: DADOS_PREDITIVA_1.parquet
+LINHAS: 198,639
+COLUNAS: 323
+CAMPOS PRINCIPAIS: ['Codigo Cliente', 'Razao Social', 'Codigo Grupo Cliente', 'Grupo Cliente', 'Codigo Representante', 'Codigo Supervisor', 'Numero Pedido', 'Data Cadastro', 'Data Ultima Compra', 'Data Cadastro Cliente', 'Codigo Linha', 'Linha', 'Referencia', 'Tipo Pedido', 'Prazo Medio', 'Qtd Venda', 'Vlr Venda']
+Data Cadastro: 2016-09-15 00:00:00 até 2018-07-31 00:00:00 | válidas: 198,639
+Codigo Cliente: distintos=5,206
+Numero Pedido: distintos=96,269
+Qtd Venda: soma=3,085,525.00
+Vlr Venda: soma=130,650,754.18
+COLUNAS SUFIXADAS: 306
+SUFIXADAS COM DADOS: 0
+EXEMPLOS: []
+
+ARQUIVO: DADOS_PREDITIVA_2.parquet
+LINHAS: 198,639
+COLUNAS: 323
+CAMPOS PRINCIPAIS: ['Codigo Cliente', 'Razao Social', 'Codigo Grupo Cliente', 'Grupo Cliente', 'Codigo Representante', 'Codigo Supervisor', 'Numero Pedido', 'Data Cadastro', 'Data Ultima Compra', 'Data Cadastro Cliente', 'Codigo Linha', 'Linha', 'Referencia', 'Tipo Pedido', 'Prazo Medio', 'Qtd Venda', 'Vlr Venda']
+Data Cadastro: 2018-01-04 00:00:00 até 2019-12-31 00:00:00 | válidas: 198,639
+Codigo Cliente: distintos=6,555
+Numero Pedido: distintos=108,977
+Qtd Venda: soma=3,122,331.00
+Vlr Venda: soma=123,399,542.60
+COLUNAS SUFIXADAS: 306
+SUFIXADAS COM DADOS: 0
+EXEMPLOS: []
+
+ARQUIVO: DADOS_PREDITIVA_3.parquet
+LINHAS: 198,638
+COLUNAS: 323
+CAMPOS PRINCIPAIS: ['Codigo Cliente', 'Razao Social', 'Codigo Grupo Cliente', 'Grupo Cliente', 'Codigo Representante', 'Codigo Supervisor', 'Numero Pedido', 'Data Cadastro', 'Data Ultima Compra', 'Data Cadastro Cliente', 'Codigo Linha', 'Linha', 'Referencia', 'Tipo Pedido', 'Prazo Medio', 'Qtd Venda', 'Vlr Venda']
+Data Cadastro: 2019-08-01 00:00:00 até 2023-12-31 00:00:00 | válidas: 198,638
+Codigo Cliente: distintos=20,344
+Numero Pedido: distintos=98,034
+Qtd Venda: soma=2,529,506.00
+Vlr Venda: soma=130,224,918.53
+COLUNAS SUFIXADAS: 306
+SUFIXADAS COM DADOS: 0
+EXEMPLOS: []
+
+ARQUIVO: DADOS_PREDITIVA_4.parquet
+LINHAS: 198,638
+COLUNAS: 323
+CAMPOS PRINCIPAIS: ['Codigo Cliente', 'Razao Social', 'Codigo Grupo Cliente', 'Grupo Cliente', 'Codigo Representante', 'Codigo Supervisor', 'Numero Pedido', 'Data Cadastro', 'Data Ultima Compra', 'Data Cadastro Cliente', 'Codigo Linha', 'Linha', 'Referencia', 'Tipo Pedido', 'Prazo Medio', 'Qtd Venda', 'Vlr Venda']
+Data Cadastro: 2023-08-01 00:00:00 até 2024-12-28 00:00:00 | válidas: 198,638
+Codigo Cliente: distintos=12,467
+Numero Pedido: distintos=92,304
+Qtd Venda: soma=2,403,080.00
+Vlr Venda: soma=127,013,924.26
+COLUNAS SUFIXADAS: 306
+SUFIXADAS COM DADOS: 0
+EXEMPLOS: []
+
+ARQUIVO: DADOS_PREDITIVA_5.parquet
+LINHAS: 198,638
+COLUNAS: 323
+CAMPOS PRINCIPAIS: ['Codigo Cliente', 'Razao Social', 'Codigo Grupo Cliente', 'Grupo Cliente', 'Codigo Representante', 'Codigo Supervisor', 'Numero Pedido', 'Data Cadastro', 'Data Ultima Compra', 'Data Cadastro Cliente', 'Codigo Linha', 'Linha', 'Referencia', 'Tipo Pedido', 'Prazo Medio', 'Qtd Venda', 'Vlr Venda']
+Data Cadastro: 2024-01-09 00:00:00 até 2025-12-08 00:00:00 | válidas: 74,457
+Codigo Cliente: distintos=7,195
+Numero Pedido: distintos=91,361
+Qtd Venda: soma=2,491,361.00
+Vlr Venda: soma=139,192,989.41
+COLUNAS SUFIXADAS: 306
+SUFIXADAS COM DADOS: 0
+EXEMPLOS: []
+
+ARQUIVO: DADOS_PREDITIVA_6.parquet
+LINHAS: 198,638
+COLUNAS: 323
+CAMPOS PRINCIPAIS: ['Codigo Cliente', 'Razao Social', 'Codigo Grupo Cliente', 'Grupo Cliente', 'Codigo Representante', 'Codigo Supervisor', 'Numero Pedido', 'Data Cadastro', 'Data Ultima Compra', 'Data Cadastro Cliente', 'Codigo Linha', 'Linha', 'Referencia', 'Tipo Pedido', 'Prazo Medio', 'Qtd Venda', 'Vlr Venda']
+Data Cadastro: 2025-01-07 00:00:00 até 2026-12-09 00:00:00 | válidas: 74,272
+Codigo Cliente: distintos=7,451
+Numero Pedido: distintos=93,362
+Qtd Venda: soma=2,417,118.00
+Vlr Venda: soma=156,994,620.47
+COLUNAS SUFIXADAS: 306
+SUFIXADAS COM DADOS: 0
+EXEMPLOS: []
+
+TOTAL DE LINHAS DA BASE: 1,191,830
+
+============================================================
+BASE: DADOS_PREDITIVA_FAT
+
+ARQUIVO: DADOS_PREDITIVA_FAT_1.parquet
+LINHAS: 15,115
+COLUNAS: 375
+CAMPOS PRINCIPAIS: ['Codigo Cliente', 'Razao Social', 'Codigo Grupo Cliente', 'Grupo Cliente', 'Codigo Representante', 'Representante', 'Numero', 'Numero Pedido', 'Data Emissao', 'Codigo Linha', 'Linha', 'Referencia', 'Produto', 'Qtd Faturada', 'Vlr Faturado']
+Data Emissao: 2020-01-06 00:00:00 até 2020-12-06 00:00:00 | válidas: 6,752
+Codigo Cliente: distintos=897
+Numero Pedido: distintos=6,245
+Qtd Faturada: soma=205,779.00
+Vlr Faturado: soma=7,892,451.46
+COLUNAS SUFIXADAS: 360
+SUFIXADAS COM DADOS: 0
+EXEMPLOS: []
+
+ARQUIVO: DADOS_PREDITIVA_FAT_2.parquet
+LINHAS: 15,115
+COLUNAS: 375
+CAMPOS PRINCIPAIS: ['Codigo Cliente', 'Razao Social', 'Codigo Grupo Cliente', 'Grupo Cliente', 'Codigo Representante', 'Representante', 'Numero', 'Numero Pedido', 'Data Emissao', 'Codigo Linha', 'Linha', 'Referencia', 'Produto', 'Qtd Faturada', 'Vlr Faturado']
+Data Emissao: 2020-01-06 00:00:00 até 2020-12-06 00:00:00 | válidas: 6,166
+Codigo Cliente: distintos=1,103
+Numero Pedido: distintos=6,718
+Qtd Faturada: soma=4,471,316.00
+Vlr Faturado: soma=30,194,188.69
+COLUNAS SUFIXADAS: 360
+SUFIXADAS COM DADOS: 0
+EXEMPLOS: []
+
+ARQUIVO: DADOS_PREDITIVA_FAT_3.parquet
+LINHAS: 15,115
+COLUNAS: 375
+CAMPOS PRINCIPAIS: ['Codigo Cliente', 'Razao Social', 'Codigo Grupo Cliente', 'Grupo Cliente', 'Codigo Representante', 'Representante', 'Numero', 'Numero Pedido', 'Data Emissao', 'Codigo Linha', 'Linha', 'Referencia', 'Produto', 'Qtd Faturada', 'Vlr Faturado']
+Data Emissao: 2020-02-10 00:00:00 até 2020-06-30 00:00:00 | válidas: 15,115
+Codigo Cliente: distintos=802
+Numero Pedido: distintos=6,121
+Qtd Faturada: soma=273,668.00
+Vlr Faturado: soma=10,615,714.50
+COLUNAS SUFIXADAS: 360
+SUFIXADAS COM DADOS: 0
+EXEMPLOS: []
+
+ARQUIVO: DADOS_PREDITIVA_FAT_4.parquet
+LINHAS: 15,114
+COLUNAS: 375
+CAMPOS PRINCIPAIS: ['Codigo Cliente', 'Razao Social', 'Codigo Grupo Cliente', 'Grupo Cliente', 'Codigo Representante', 'Representante', 'Numero', 'Numero Pedido', 'Data Emissao', 'Codigo Linha', 'Linha', 'Referencia', 'Produto', 'Qtd Faturada', 'Vlr Faturado']
+Data Emissao: 2020-02-10 00:00:00 até 2020-06-30 00:00:00 | válidas: 15,114
+Codigo Cliente: distintos=691
+Numero Pedido: distintos=5,004
+Qtd Faturada: soma=184,592.00
+Vlr Faturado: soma=6,609,492.25
+COLUNAS SUFIXADAS: 360
+SUFIXADAS COM DADOS: 0
+EXEMPLOS: []
+
+ARQUIVO: DADOS_PREDITIVA_FAT_5.parquet
+LINHAS: 15,114
+COLUNAS: 375
+CAMPOS PRINCIPAIS: ['Codigo Cliente', 'Razao Social', 'Codigo Grupo Cliente', 'Grupo Cliente', 'Codigo Representante', 'Representante', 'Numero', 'Numero Pedido', 'Data Emissao', 'Codigo Linha', 'Linha', 'Referencia', 'Produto', 'Qtd Faturada', 'Vlr Faturado']
+Data Emissao: 2020-01-06 00:00:00 até 2020-12-09 00:00:00 | válidas: 6,989
+Codigo Cliente: distintos=771
+Numero Pedido: distintos=4,478
+Qtd Faturada: soma=233,144.00
+Vlr Faturado: soma=6,532,421.48
+COLUNAS SUFIXADAS: 360
+SUFIXADAS COM DADOS: 0
+EXEMPLOS: []
+
+ARQUIVO: DADOS_PREDITIVA_FAT_6.parquet
+LINHAS: 15,114
+COLUNAS: 375
+CAMPOS PRINCIPAIS: ['Codigo Cliente', 'Razao Social', 'Codigo Grupo Cliente', 'Grupo Cliente', 'Codigo Representante', 'Representante', 'Numero', 'Numero Pedido', 'Data Emissao', 'Codigo Linha', 'Linha', 'Referencia', 'Produto', 'Qtd Faturada', 'Vlr Faturado']
+Data Emissao: 2020-01-07 00:00:00 até 2020-12-09 00:00:00 | válidas: 4,238
+Codigo Cliente: distintos=1,097
+Numero Pedido: distintos=6,136
+Qtd Faturada: soma=545,606.00
+Vlr Faturado: soma=6,756,422.37
+COLUNAS SUFIXADAS: 360
+SUFIXADAS COM DADOS: 0
+EXEMPLOS: []
+
+TOTAL DE LINHAS DA BASE: 90,687

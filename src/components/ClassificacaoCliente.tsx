@@ -1,0 +1,154 @@
+"use client";
+import { useState } from "react";
+import type { Prioridade } from "@/lib/prioridade-cliente";
+import { OPCOES_CLASSIFICACAO, type CodigoClassificacao } from "@/lib/classificacoes";
+
+type Props = {
+  codigo: string;
+  iniciais: CodigoClassificacao[];
+  sugeridas: CodigoClassificacao[];
+  encerrada: boolean;
+  prioridadeInicial: Prioridade | null;
+  prioridadeSugerida: Prioridade;
+  pontosPrioridade: number | null;
+  motivosPrioridade: string[];
+  reativacao: boolean;
+};
+export default function ClassificacaoCliente({ codigo, iniciais, sugeridas, encerrada, prioridadeInicial, prioridadeSugerida, pontosPrioridade, motivosPrioridade, reativacao }: Props) {
+  const [selecionadas, setSelecionadas] = useState<CodigoClassificacao[]>(iniciais);
+  const [prioridade, setPrioridade] = useState<Prioridade>(
+    prioridadeInicial ?? prioridadeSugerida
+  );
+  const [salvando, setSalvando] = useState(false);
+  const [mensagem, setMensagem] = useState("");
+  async function salvar() {
+    setSalvando(true); setMensagem("");
+    try {
+      const resposta = await fetch(`/api/clientes/${encodeURIComponent(codigo)}/classificacoes`, {
+        method: "PUT", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ classificacoes: selecionadas }),
+      });
+      const corpo = await resposta.json() as { erro?: string };
+      if (!resposta.ok) throw new Error(corpo.erro || `HTTP ${resposta.status}`);
+      const r2 = await fetch(
+        `/api/clientes/${encodeURIComponent(codigo)}/prioridade`,
+        {
+          method: "PUT",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ prioridade })
+        }
+      );
+
+      const c2 = await r2.json() as { erro?: string };
+
+      if (!r2.ok) {
+        throw new Error(
+          "Classificações existentes salvas, mas prioridade falhou: " +
+          (c2.erro || `HTTP ${r2.status}`)
+        );
+      }
+
+      setMensagem("Classificações e prioridade salvas com sucesso.");
+    } catch (e) { setMensagem(e instanceof Error ? e.message : "Erro ao salvar"); }
+    finally { setSalvando(false); }
+  }
+  return <section style={{background:"#fffdf9",border:"1px solid #f0c88f",borderRadius:18,padding:24,marginBottom:20}}>
+    <h2 style={{marginTop:0,fontSize:19}}>Classificação da Carteira</h2>
+    {encerrada ? <p style={{padding:12,background:"#ffe5e5",borderRadius:10,fontWeight:800,color:"#9a2222"}}>EMPRESA ENCERRADA — Receita Federal BAIXADA. Fora da fila comercial. Histórico preservado.</p> : <>
+      <p style={{fontSize:13}}>Marque quantas opções forem necessárias. A seleção salva permanece até ser alterada.</p>
+      <div style={{display:"grid",gridTemplateColumns:"repeat(auto-fit,minmax(280px,1fr))",gap:12}}>
+        {OPCOES_CLASSIFICACAO.map(o => <label key={o.id} style={{display:"flex",alignItems:"center",gap:9,padding:12,border:"1px solid #f3d2a5",borderRadius:10,cursor:"pointer"}}>
+          <input type="checkbox" checked={selecionadas.includes(o.id)} onChange={e=>setSelecionadas(s=>e.target.checked?[...s,o.id]:s.filter(x=>x!==o.id))} /> {o.nome}
+        </label>)}
+      </div>
+      <div style={{marginTop:14,fontSize:12,color:"#815326"}}>Sugestões identificadas nos dados: {sugeridas.length ? sugeridas.map(id=>OPCOES_CLASSIFICACAO.find(o=>o.id===id)?.nome).join(" · ") : "Nenhuma sugestão automática validada"}</div>
+      <div style={{
+        marginTop:22,
+        padding:18,
+        border:"1px solid #e9c58d",
+        borderRadius:12,
+        background:"#fff8ed"
+      }}>
+        <h3 style={{marginTop:0}}>
+          Prioridade Comercial{reativacao ? " — Reativação" : ""}
+        </h3>
+
+        <p style={{fontSize:13}}>
+          Sugestão automática:{" "}
+          <strong>
+            {({
+              ALTO:"Alto",
+              MEDIO:"Médio",
+              BAIXO:"Baixo",
+              NAO_AVALIADO:"Não avaliado"
+            })[prioridadeSugerida]}
+          </strong>
+          {pontosPrioridade !== null
+            ? ` — ${pontosPrioridade}/100 pontos`
+            : " — dados insuficientes"}
+        </p>
+
+        <div style={{
+          display:"grid",
+          gridTemplateColumns:"repeat(auto-fit,minmax(145px,1fr))",
+          gap:10
+        }}>
+          {([
+            ["ALTO","Alto"],
+            ["MEDIO","Médio"],
+            ["BAIXO","Baixo"],
+            ["NAO_AVALIADO","Não avaliado"]
+          ] as const).map(([id,nome]) => (
+            <label key={id} style={{
+              padding:12,
+              borderRadius:10,
+              background:prioridade===id ? "#ffe8c5" : "#fff",
+              border:prioridade===id
+                ? "2px solid #f57c00"
+                : "1px solid #e6d2ae",
+              cursor:"pointer",
+              fontWeight:700
+            }}>
+              <input
+                type="radio"
+                name={`prioridade-${codigo}`}
+                checked={prioridade===id}
+                onChange={()=>setPrioridade(id)}
+                style={{marginRight:8}}
+              />
+              {nome}
+            </label>
+          ))}
+        </div>
+
+        <p style={{
+          fontSize:12,
+          fontWeight:700,
+          marginTop:16,
+          marginBottom:4
+        }}>
+          Fundamentação da análise
+        </p>
+
+        <ul style={{
+          fontSize:12,
+          lineHeight:1.7,
+          paddingLeft:20,
+          marginTop:4
+        }}>
+          {motivosPrioridade.map((motivo,i)=>(
+            <li key={i}>{motivo}</li>
+          ))}
+        </ul>
+
+        <p style={{fontSize:11,color:"#815326"}}>
+          {prioridadeInicial !== null
+            ? "Classificação manual salva."
+            : "Sugestão automática ainda não salva."}
+          {" "}A seleção manual prevalece sobre a sugestão.
+        </p>
+      </div>
+      <button type="button" disabled={salvando} onClick={salvar} style={{marginTop:16,padding:"12px 22px",border:0,borderRadius:10,background:"#f57c00",color:"white",fontWeight:800,cursor:"pointer"}}>{salvando?"Salvando...":"Salvar classificações"}</button>
+      {mensagem && <p role="status" style={{fontSize:13}}>{mensagem}</p>}
+    </>}
+  </section>;
+}

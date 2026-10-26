@@ -1,0 +1,1271 @@
+﻿DIAGNOSTICO INTEGRACAO FATURAMENTO
+
+========== src\app\cliente\[codigo]\page.tsx ==========
+1: import { MessageCircle, Phone, Mail, MapPin } from "lucide-react";
+2: import Link from "next/link";
+3: import { redirect } from "next/navigation";
+4: import { cookies } from "next/headers";
+5: 
+6: import { validarToken } from "@/lib/auth";
+7: import ResultadoAtendimento from "@/components/ResultadoAtendimento";
+8: import ClassificacaoCliente from "@/components/ClassificacaoCliente";
+9: import { obterClassificacoes } from "@/lib/classificacoes-db";
+10: import { carregarCarteira2027 } from "@/lib/carteira-2027-data";
+11: import type { CodigoClassificacao } from "@/lib/classificacoes";
+12: import {
+13:   getData,
+14:   getIndiceVendas,
+15:   cleanCode,
+16:   cleanReferencia,
+17:   MAPA_SUPERVISORES,
+18: } from "@/lib/comercial-data";
+19: 
+20: type Props = {
+21:   params: Promise<{
+22:     codigo: string;
+23:   }>;
+24: };
+25: 
+26: function moeda(valor: number) {
+27:   return new Intl.NumberFormat("pt-BR", {
+28:     style: "currency",
+29:     currency: "BRL",
+30:   }).format(valor || 0);
+31: }
+32: 
+33: function numero(valor: number) {
+34:   return new Intl.NumberFormat("pt-BR", {
+35:     maximumFractionDigits: 0,
+36:   }).format(valor || 0);
+37: }
+38: 
+39: function dataBR(data: Date | null) {
+40:   if (!data) return "Sem compra";
+41: 
+42:   return new Intl.DateTimeFormat("pt-BR").format(data);
+43: }
+44: 
+45: export default async function ClientePage({ params }: Props) {
+46:   const { codigo } = await params;
+47: 
+48:   // ============================================================
+49:   // AUTENTICAÃ‡ÃƒO
+50:   // ============================================================
+51: 
+52:   const cookieStore = await cookies();
+53:   const token = cookieStore.get("kidy_session")?.value;
+54: 
+55:   if (!token) {
+56:     redirect("/");
+57:   }
+58: 
+59:   const usuario = await validarToken(token);
+60: 
+61:   if (!usuario) {
+62:     redirect("/");
+63:   }
+64: 
+65:   // ============================================================
+66:   // DADOS
+67:   // ============================================================
+68: 
+69:   const inicioDados = performance.now();
+70:   const dados = await getData();
+71:   const { carteira, vendas, produtosAutorizados, nomesReferencias } = dados;
+72:   console.log("[PERFORMANCE CLIENTE] getData:", Math.round(performance.now() - inicioDados), "ms");
+73: 
+74:   const codigoLimpo = cleanCode(codigo);
+75: 
+76:   const cliente = carteira.find(
+77:     (c) => cleanCode(c.codigo) === codigoLimpo
+78:   );
+79: 
+80:   if (!cliente) {
+81:     return (
+82:       <main style={styles.erroPage}>
+83:         <div style={styles.erroCard}>
+84:           <div style={styles.eyebrow}>CLIENTE NÃƒO ENCONTRADO</div>
+85: 
+86:           <h1 style={styles.erroTitulo}>
+87:             Cliente {codigoLimpo}
+88:           </h1>
+89: 
+90:           <p>
+91:             NÃ£o localizei esse cliente na carteira comercial.
+92:           </p>
+93: 
+94:           <Link href="/dashboard" style={styles.voltar}>
+95:             â† Voltar para Venda Mais+
+96:           </Link>
+97:         </div>
+98:       </main>
+99:     );
+100:   }
+101: 
+102:   // ============================================================
+103:   // HISTÃ“RICO DO CLIENTE
+104:   // ============================================================
+105: 
+106:   const vendasCliente = vendas
+107:     .filter((v) => cleanCode(v.codigo) === codigoLimpo)
+108:     .filter((v) => v.data)
+109:     .sort(
+110:       (a, b) =>
+111:         (b.data?.getTime() || 0) -
+112:         (a.data?.getTime() || 0)
+113:     );
+114: 
+115:   const hoje = new Date();
+116: 
+117:   const inicioAno = new Date(
+118:     hoje.getFullYear(),
+119:     0,
+120:     1
+121:   );
+122: 
+123:   const ultimaCompra =
+124:     vendasCliente.length > 0
+125:       ? vendasCliente[0].data
+126:       : null;
+127: 
+128:   const diasSemCompra = ultimaCompra
+129:     ? Math.max(
+130:         0,
+131:         Math.floor(
+132:           (hoje.getTime() - ultimaCompra.getTime()) /
+133:             86400000
+134:         )
+135:       )
+136:     : null;
+137: 
+138:   const vendasAno = vendasCliente.filter(
+139:     (v) =>
+140:       v.data &&
+141:       v.data >= inicioAno &&
+142:       v.data <= hoje
+143:   );
+144: 
+145:   const paresAno = vendasAno.reduce(
+146:     (total, v) => total + (v.qtd || 0),
+147:     0
+148:   );
+149: 
+150:   const valorAno = vendasAno.reduce(
+151:     (total, v) => total + (v.vlr || 0),
+152:     0
+153:   );
+154: 
+155:   const paresHistorico = vendasCliente.reduce(
+156:     (total, v) => total + (v.qtd || 0),
+157:     0
+158:   );
+159: 
+160:   const valorHistorico = vendasCliente.reduce(
+161:     (total, v) => total + (v.vlr || 0),
+162:     0
+163:   );
+164: 
+165:   const regional =
+166:     MAPA_SUPERVISORES[cliente.sup] ||
+167:     cliente.sup ||
+168:     "NÃ£o informada";
+169: 
+170:   // ============================================================
+171:   // MIX DE PRODUTOS / OPORTUNIDADES
+1046:                 </tbody>
+1047:               </table>
+1048:             </div>
+1049:           </section>
+1050:         )}
+1051: 
+1052:         {/* HISTÃ“RICO */}
+1053: 
+1054:         <section style={styles.bloco}>
+1055: 
+1056:           <div style={styles.blocoTitulo}>
+1057:             <span style={styles.numeroSecao}>
+1058:               02
+1059:             </span>
+1060: 
+1061:             HistÃ³rico comercial
+1062:           </div>
+1063: 
+1064:           <div style={styles.historicoGrid}>
+1065: 
+1066:             <Indicador
+1067:               titulo="Pares no ano"
+1068:               valor={numero(paresAno)}
+1069:             />
+1070: 
+1071:             <Indicador
+1072:               titulo="Valor no ano"
+1073:               valor={moeda(valorAno)}
+1074:             />
+1075: 
+1076:             <Indicador
+1077:               titulo="Pares histÃ³rico"
+1078:               valor={numero(paresHistorico)}
+1079:             />
+1080: 
+1081:             <Indicador
+1082:               titulo="Valor histÃ³rico"
+1083:               valor={moeda(valorHistorico)}
+1084:             />
+1085: 
+1086:           </div>
+1087: 
+1088:         </section>
+1089: 
+1090:         {/* MIX DE PRODUTOS */}
+1091:         <section style={styles.bloco}>
+1092:           <div style={styles.blocoTitulo}><span style={styles.numeroSecao}>03</span>Mix de produtos</div>
+1093:           {mixLinhas.length ? (
+1094:             <div style={styles.tableWrap}><table style={styles.tabela}>
+1095:               <thead><tr>
+1096:                 <th style={styles.th}>Linha</th><th style={styles.thRight}>Pares</th>
+
+========== src\lib\parquet.ts ==========
+
+
+========== src\lib\comercial-data.ts ==========
+
+    normalizarRepresentante,
+  } from "./representantes-oficiais";
+  import {
+>   atualizarCatalogoDrive,
+>   versoesCatalogoDrive,
+>   lerArquivoComercial,
+>   prepararParquetsDrive,
+>   pastaParquets
+> } from "./google-drive-adapter";
+  import path from "path";
+  import * as XLSX from "xlsx";
+> import { asyncBufferFromFile, parquetReadObjects } from "hyparquet";
+> import { compressors } from "hyparquet-compressors";
+  
+> export const MAPA_SUPERVISORES: Record<string, string> = {
+    "9902": "Centro Oeste",
+    "9907": "SUL",
+    "9914": "Norte / Nordeste",
+    "9915": "REM",
+    "9916": "SPC",
+    "9920": "B2B",
+  };
+  
+> export function cleanCode(v: any) {
+    const s = String(v ?? "").trim();
+    return s.replace(/\.0+$/, "");
+  }
+  
+> export function cleanReferencia(v: any) {
+    const s = cleanCode(v);
+    if (!s) return "";
+    return /^\d+$/.test(s) && s.length <= 7 ? s.padStart(7, "0") : s;
+  }
+  
+> export function norm(v: any) {
+    return String(v ?? "")
+      .normalize("NFD")
+      .replace(/[\u0300-\u036f]/g, "")
+      .trim()
+      .toUpperCase();
+  const GITHUB_RAW =
+    "https://raw.githubusercontent.com/carlinhosg7/rota_certa/master";
+  
+> // Somente os Parquets usam cache fÃ­sico tÃ©cnico para leitura pelo hyparquet.
+> // Os dois arquivos Excel sÃ£o lidos DIRETAMENTE do GitHub em memÃ³ria.
+  const BASES_GITHUB = [
+>   "DADOS_PREDITIVA_1.parquet",
+>   "DADOS_PREDITIVA_2.parquet",
+>   "DADOS_PREDITIVA_3.parquet",
+>   "DADOS_PREDITIVA_4.parquet",
+>   "DADOS_PREDITIVA_5.parquet",
+>   "DADOS_PREDITIVA_6.parquet",
+  ];
+  
+  type Carteira = {
+    codigo: string;
+    razao: string;
+    bloqueio: string;
+  };
+  
+> export type Venda = {
+    codigo: string;
+    rep: string;
+    sup: string;
+    data: Date | null;
+    qtd: number;
+    prazoMedio: number;
+  };
+  
+> export type ReposicaoReferencia = {
+    referencia: string;
+    nome: string;
+    ultimaCompra: Date;
+    diasSemCompra: number;
+    campanha: string | null;
+    temCampanhaReposicao: boolean;
+  };
+  
+> export type ProdutoAutorizado = {
+    codigoLinha: string;
+    linha: string;
+    referencia: string;
+    produto: string;
+    qtdVenda: number;
+  };
+  
+> export type NomeReferencia = {
+    codigoLinha: string;
+    linha: string;
+    referencia: string;
+    nome: string;
+  };
+  
+  
+> export type MunicipioGeo = {
+    municipio: string;
+    uf: string;
+    codigoIbge: string;
+    lat: number;
+    lon: number;
+    cityKey: string;
+  };
+  
+> export type CidadeRota = {
+    cidade: string;
+    uf: string;
+    cityKey: string;
+  
+    lat: number;
+  const CACHE_INTERVALO_MS = 15 * 60 * 1000;
+  const CACHE_RETRY_MS = 60 * 1000;
+  
+> export function cleanSupervisor(v: any) {
+    const s = cleanCode(v);
+    if (!s) return "";
+    if (MAPA_SUPERVISORES[s]) return s;
+    return NOME_PARA_COD[norm(s)] || s;
+  }
+      .join("/")}`;
+  }
+  
+> async function garantirArquivo(nome: string) {
+    if (!fs.existsSync(DATA_DIR)) {
+      fs.mkdirSync(DATA_DIR, { recursive: true });
+    }
+  
+    const destino = path.join(DATA_DIR, nome);
+      try {
+        if (fs.statSync(destino).size > 0) return destino;
+      } catch {
+>       // Se o arquivo estiver invÃ¡lido/inacessÃ­vel, tenta baixÃ¡-lo novamente.
+      }
+    }
+  
+    const url = githubUrl(nome);
+    console.log(`[BASE] Baixando ${nome}...`);
+      );
+    }
+  
+>   const buffer = Buffer.from(await r.arrayBuffer());
+  
+>   if (!buffer.length) {
+      throw new Error(`O GitHub retornou ${nome} vazio.`);
+    }
+  
+>   fs.writeFileSync(destino, buffer);
+  
+    console.log(
+>     `[BASE] ${nome} salvo em cache (${buffer.length.toLocaleString("pt-BR")} bytes)`
+    );
+  
+    return destino;
+  }
+  
+  async function prepararBasesGitHub() {
+>   // Sequencial para nÃ£o disparar simultaneamente o download de vÃ¡rios arquivos grandes.
+    for (const nome of BASES_GITHUB) {
+>     await garantirArquivo(nome);
+    }
+  }
+  
+  /**
+   * CARTEIRA:
+  
+    console.log(`[CARTEIRA] Baixando ${nome} diretamente do GitHub...`);
+  
+>   const buffer = await lerArquivoComercial(nome);
+  
+>   if (!buffer.length) {
+      throw new Error(`${nome} foi baixado, mas estÃ¡ vazio.`);
+    }
+  
+    console.log(
+>     `[CARTEIRA] ${nome} recebido (${buffer.length.toLocaleString("pt-BR")} bytes)`
+    );
+  
+    let wb: XLSX.WorkBook;
+  
+    try {
+>     wb = XLSX.read(buffer, {
+>       type: "buffer",
+        cellDates: true,
+      });
+    } catch (e: any) {
+      throw new Error(
+        `NÃ£o foi possÃ­vel abrir ${nome} recebido do GitHub: ${
+  
+    console.log(`[FINANCEIRO] Baixando ${nome} diretamente do GitHub...`);
+  
+>   const buffer = await lerArquivoComercial(nome);
+  
+>   if (!buffer.length) {
+      throw new Error(`${nome} foi baixado, mas estÃ¡ vazio.`);
+    }
+  
+    console.log(
+>     `[FINANCEIRO] ${nome} recebido (${buffer.length.toLocaleString("pt-BR")} bytes)`
+    );
+  
+    let wb: XLSX.WorkBook;
+  
+    try {
+>     wb = XLSX.read(buffer, {
+>       type: "buffer",
+        cellDates: true,
+      });
+    } catch (e: any) {
+      throw new Error(
+        `NÃ£o foi possÃ­vel abrir ${nome} recebido do GitHub: ${
+   * Uma referÃªncia sÃ³ pode aparecer na sugestÃ£o se estiver nesta base.
+   */
+  async function carregarProdutosAutorizados(): Promise<ProdutoAutorizado[]> {
+>   const nome = "DADOS PREDITIVA PRODUTOS EM LINHA.xlsx";
+    const url = githubUrl(nome);
+  
+    console.log(`[PRODUTOS] Baixando ${nome} diretamente do GitHub...`);
+  
+>   const buffer = await lerArquivoComercial(nome);
+  
+>   if (!buffer.length) {
+      throw new Error(`${nome} foi baixado, mas estÃ¡ vazio.`);
+    }
+  
+>   const wb = XLSX.read(buffer, { type: "buffer", cellDates: true });
+  
+    let rows: any[][] = [];
+  
+    for (const sn of wb.SheetNames) {
+      const a = XLSX.utils.sheet_to_json<any[]>(wb.Sheets[sn], {
+   * A referÃªncia Ã© a chave; Codigo Linha e Linha sÃ£o apenas atributos.
+   */
+  async function carregarNomesReferencias(): Promise<NomeReferencia[]> {
+>   const nomeArquivo = "NOME_REFERENCIAS.xlsx";
+>   const url = githubUrl(nomeArquivo);
+  
+>   console.log(`[NOME REFERENCIAS] Baixando ${nomeArquivo} diretamente do GitHub...`);
+  
+>   const buffer = await lerArquivoComercial(nomeArquivo);
+>   if (!buffer.length) throw new Error(`${nomeArquivo} foi baixado, mas estÃ¡ vazio.`);
+  
+>   const wb = XLSX.read(buffer, { type: "buffer", cellDates: true });
+    let rows: any[][] = [];
+  
+    for (const sn of wb.SheetNames) {
+      const a = XLSX.utils.sheet_to_json<any[]>(wb.Sheets[sn], {
+        header: 1,
+  
+    if (!rows.length) {
+      throw new Error(
+>       `NÃ£o localizei as colunas Referencia e Nome em ${nomeArquivo}.`
+      );
+    }
+  
+    const headers = rows[0].map((x) => String(x ?? ""));
+    const porReferencia = new Map<string, NomeReferencia>();
+  
+    console.log(`[GEO] Baixando ${nome} diretamente do GitHub...`);
+  
+>   const buffer = await lerArquivoComercial(nome);
+  
+>   if (!buffer.length) {
+      throw new Error(`${nome} foi baixado, mas estÃ¡ vazio.`);
+    }
+  
+    // Detecta separador e preserva acentos UTF-8.
+>   const conteudo = buffer.toString("utf8").replace(/^\uFEFF/, "");
+    const primeiraLinha = conteudo.split(/\r?\n/, 1)[0] || "";
+    const separador = primeiraLinha.includes(";") ? ";" : ",";
+  
+>   const wb = XLSX.read(conteudo, {
+      type: "string",
+      raw: true,
+      FS: separador,
+    });
+  
+   * A distÃ¢ncia Ã© geogrÃ¡fica (linha reta/Haversine) e o score combina
+   * proximidade + clientes crÃ­ticos + tamanho da oportunidade.
+   */
+> export function sugerirRota(
+    cidadeBase: string,
+    representante: string,
+    carteira: Carteira[],
+    vendas: Venda[],
+    municipios: MunicipioGeo[],
+  
+  async function carregarVendas(): Promise<Venda[]> {
+    const files = fs
+>     .readdirSync(pastaParquets())
+>     .filter((f) => /^DADOS_PREDITIVA_\d+\.parquet$/i.test(f))
+      .sort((a, b) =>
+        a.localeCompare(b, undefined, { numeric: true })
+      );
+  
+    if (!files.length) {
+      throw new Error(
+>       "Nenhum DADOS_PREDITIVA_*.parquet encontrado em /data"
+      );
+    }
+  
+    const out: Venda[] = [];
+    const wanted = [
+    ];
+  
+    for (const f of files) {
+>     const arquivo = path.join(pastaParquets(), f);
+>     console.log(`[VENDAS] Lendo ${f} com hyparquet...`);
+  
+>     // ValidaÃ§Ã£o rÃ¡pida para detectar arquivo incompleto/corrompido antes do parser.
+>     const stat = fs.statSync(arquivo);
+      if (stat.size < 8) {
+        throw new Error(`${f} estÃ¡ vazio ou incompleto.`);
+      }
+  
+>     const fd = fs.openSync(arquivo, "r");
+      try {
+>       const inicio = Buffer.alloc(4);
+>       const fim = Buffer.alloc(4);
+>       fs.readSync(fd, inicio, 0, 4, 0);
+>       fs.readSync(fd, fim, 0, 4, stat.size - 4);
+  
+        if (inicio.toString("ascii") !== "PAR1" || fim.toString("ascii") !== "PAR1") {
+          throw new Error(`${f} nÃ£o possui assinatura PAR1 vÃ¡lida.`);
+        }
+      } finally {
+      }
+  
+      try {
+>       const file = await asyncBufferFromFile(arquivo);
+  
+>       const inicioLeituraParquet = performance.now();
+>       const rows = await parquetReadObjects({
+          file,
+          columns: wanted,
+          compressors,
+        });
+  
+          `[VENDAS] ${f}: ${rows.length.toLocaleString("pt-BR")} linhas lidas.`
+        );
+  
+>       registrarMemoria(`PARQUET ${f} APOS LEITURA`);
+>       const tempoLeituraParquet = performance.now() - inicioLeituraParquet;
+>       const inicioConversaoParquet = performance.now();
+  
+        for (const r of rows as Record<string, any>[]) {
+          const codigo = cleanCode(r["Codigo Cliente"]);
+          const rep = cleanCode(r["Codigo Representante"]);
+          const sup = cleanSupervisor(r["Codigo Supervisor"]);
+          });
+        }
+        console.log(
+>         "[PERFORMANCE PARQUET]",
+          f,
+          "leitura:",
+>         Math.round(tempoLeituraParquet),
+          "ms",
+          "conversao:",
+>         Math.round(performance.now() - inicioConversaoParquet),
+          "ms"
+        );
+  
+>       registrarMemoria(`PARQUET ${f} APOS CONVERSAO`);
+      } catch (e: any) {
+        throw new Error(
+>         `Falha ao ler ${f} com hyparquet: ${e?.message || String(e)}`
+        );
+      }
+    }
+  
+    console.log(
+      heapUsedMB: mb(m.heapUsed),
+      heapTotalMB: mb(m.heapTotal),
+      externalMB: mb(m.external),
+>     arrayBuffersMB: mb(m.arrayBuffers),
+    });
+  }
+  async function carregarDadosAtualizados(): Promise<Cache> {
+    registrarMemoria('INICIO');
+        const inicioTotal = performance.now();
+        const inicioPreparacao = performance.now();
+  
+        if (
+>         (process.env.KIDY_DATA_SOURCE || "github").toLowerCase() === "drive"
+        ) {
+          const inicioCatalogo = performance.now();
+>         await atualizarCatalogoDrive();
+  
+          console.log(
+>           "[PERFORMANCE DRIVE] Catalogo:",
+            Math.round(performance.now() - inicioCatalogo),
+            "ms"
+          );
+  
+>         const inicioParquetsDrive = performance.now();
+>         await prepararParquetsDrive();
+  
+          console.log(
+>           "[PERFORMANCE DRIVE] Preparacao Parquets:",
+>           Math.round(performance.now() - inicioParquetsDrive),
+            "ms"
+          );
+        } else {
+          await prepararBasesGitHub();
+        }
+  
+        console.log(
+>         "[PERFORMANCE CARGA] Preparacao arquivos:",
+          Math.round(performance.now() - inicioPreparacao),
+          "ms"
+        );
+  
+        registrarMemoria('APOS PREPARACAO');
+  let indiceCache: Cache | null = null;
+  let indiceVendas: Map<string, Venda[]> | null = null;
+  
+> export function getIndiceVendas(dados: Cache): Map<string, Venda[]> {
+    if (indiceCache === dados && indiceVendas) {
+      return indiceVendas;
+    }
+  
+    const inicio = performance.now();
+  
+    return indice;
+  }
+> export async function getData(): Promise<Cache> {
+    const agora = Date.now();
+  
+    if (!cacheAtual && atualizacaoEmAndamento) {
+      return atualizacaoEmAndamento;
+    }
+      proximaVerificacaoEm = agora + CACHE_INTERVALO_MS;
+  
+      const tarefa = (async (): Promise<Cache> => {
+>       const usandoDrive =
+>         (process.env.KIDY_DATA_SOURCE || "github").toLowerCase() === "drive";
+  
+        if (cacheAtual) {
+          const mapaAtual = await carregarMapaRepresentantes();
+          const representantesMudaram =
+            versaoCacheRepresentantes === null ||
+  
+          const inicioVerificacao = performance.now();
+  
+>         if (usandoDrive) {
+>           await atualizarCatalogoDrive(true);
+          }
+  
+>         const versaoAtual = usandoDrive
+>           ? versoesCatalogoDrive()
+            : null;
+  
+          console.log(
+>           "[CACHE] Verificacao Drive:",
+            Math.round(performance.now() - inicioVerificacao),
+            "ms"
+          );
+  
+          if (
+            !representantesMudaram &&
+>           (!usandoDrive ||
+              (versaoCacheComercial !== null &&
+                versaoAtual === versaoCacheComercial))
+          ) {
+            console.log(
+>             "[CACHE] Drive e representantes sem alteraÃ§Ãµes. Reutilizando dados processados."
+            );
+  
+            return cacheAtual;
+          }
+        }
+        // Se houver mudanÃ§a posterior, a prÃ³xima verificaÃ§Ã£o recarregarÃ¡ os dados.
+        versaoCacheRepresentantes = novoCache.versaoRepresentantes;
+  
+>       if (usandoDrive) {
+>         versaoCacheComercial = versoesCatalogoDrive();
+        }
+  
+        return novoCache;
+      })();
+  
+  
+    return atualizacaoEmAndamento!;
+  }
+> export function campanhaPorNomeReferencia(nome: string): string | null {
+    const n = norm(nome);
+    if (!n) return null;
+  
+    // Campanhas ligadas diretamente ao produto/referÃªncia.
+    // A decisÃ£o nasce do NOME obtido por REFERÃŠNCIA exata em NOME_REFERENCIAS.xlsx.
+    return null;
+  }
+  
+> export function resumirClientes(
+    carteira: Carteira[],
+    vendas: Venda[],
+    nomesReferencias: NomeReferencia[] = []
+  ): ClienteResumo[] {
+    const now = new Date();
+    return out;
+  }
+  
+> export function minmax(vals: number[]) {
+    if (!vals.length) return [];
+  
+    const lo = Math.min(...vals);
+    const hi = Math.max(...vals);
+  
+
+
+
+
+========== src\lib\google-drive-adapter.ts ==========
+
+  import os from "os";
+  import path from "path";
+  
+> const drive = require("./google-drive-data.cjs");
+  
+> export const DRIVE_CACHE_DIR = path.join(
+    os.tmpdir(),
+>   "kidy-sales-intelligence-drive"
+  );
+  
+> export type ArquivoDrive = {
+    id: string;
+    nome: string;
+    caminho: string;
+    tamanho: number;
+    atualizadoEm?: string;
+  const GITHUB_RAW =
+    "https://raw.githubusercontent.com/carlinhosg7/rota_certa/master";
+  
+> const PARQUETS = [
+>   "DADOS_PREDITIVA_1.parquet",
+>   "DADOS_PREDITIVA_2.parquet",
+>   "DADOS_PREDITIVA_3.parquet",
+>   "DADOS_PREDITIVA_4.parquet",
+>   "DADOS_PREDITIVA_5.parquet",
+>   "DADOS_PREDITIVA_6.parquet"
+  ];
+  
+> let arquivosAtuais = new Map<string, ArquivoDrive>();
+  
+> const downloadsAtivos = new Map<string, Promise<Buffer>>();
+  
+  const CATALOGO_CACHE_MS = 15 * 60 * 1000;
+  
+  let catalogoAtualizadoEm = 0;
+> let consultaCatalogoEmAndamento: Promise<ArquivoDrive[]> | null = null;
+  
+> export async function atualizarCatalogoDrive(forcar = false): Promise<ArquivoDrive[]> {
+    const agora = Date.now();
+  
+    if (
+      !forcar &&
+>     arquivosAtuais.size > 0 &&
+      agora - catalogoAtualizadoEm < CATALOGO_CACHE_MS
+    ) {
+      console.log(
+>       `[DRIVE] Catalogo em cache: ${arquivosAtuais.size} arquivos`
+      );
+  
+>     return Array.from(arquivosAtuais.values());
+    }
+  
+    if (consultaCatalogoEmAndamento) {
+      return consultaCatalogoEmAndamento;
+    }
+  
+>   const consulta = (async (): Promise<ArquivoDrive[]> => {
+>     const arquivos = await drive.listarArquivos() as ArquivoDrive[];
+  
+>     const novoCatalogo = new Map<string, ArquivoDrive>();
+  
+>     for (const arquivo of arquivos) {
+>       novoCatalogo.set(arquivo.nome, arquivo);
+      }
+  
+>     arquivosAtuais = novoCatalogo;
+      catalogoAtualizadoEm = Date.now();
+  
+      console.log(
+>       `[DRIVE] Catalogo atualizado: ${arquivos.length} arquivos`
+      );
+  
+>     return arquivos;
+    })();
+  
+    consultaCatalogoEmAndamento = consulta;
+  
+    try {
+    }
+  }
+  
+> export function versoesCatalogoDrive(): string {
+    return JSON.stringify(
+>     Array.from(arquivosAtuais.values())
+>       .map((arquivo) => ({
+>         nome: arquivo.nome,
+>         id: arquivo.id,
+>         tamanho: Number(arquivo.tamanho),
+>         atualizadoEm: arquivo.atualizadoEm || "",
+        }))
+        .sort((a, b) => a.nome.localeCompare(b.nome))
+    );
+  }
+> export function arquivoDrive(nome: string) {
+>   return arquivosAtuais.get(nome);
+  }
+  
+> function validarArquivo(nome: string, buffer: Buffer) {
+>   if (!buffer.length) {
+>     throw new Error(`Arquivo vazio: ${nome}`);
+    }
+  
+>   if (nome.toLowerCase().endsWith(".parquet")) {
+      if (
+>       buffer.subarray(0, 4).toString("ascii") !== "PAR1" ||
+>       buffer.subarray(-4).toString("ascii") !== "PAR1"
+      ) {
+>       throw new Error(`Parquet invalido: ${nome}`);
+      }
+    }
+  
+    if (nome.toLowerCase().endsWith(".xlsx")) {
+      if (
+>       buffer.length < 4 ||
+>       buffer.subarray(0, 2).toString("ascii") !== "PK"
+      ) {
+        throw new Error(`Excel invalido: ${nome}`);
+      }
+    }
+  
+>   return buffer;
+  }
+  
+> function versaoArquivo(arquivo: ArquivoDrive) {
+    return JSON.stringify({
+>     id: arquivo.id,
+>     tamanho: Number(arquivo.tamanho),
+>     atualizadoEm: arquivo.atualizadoEm || ""
+    });
+  }
+  
+  function caminhoCache(nome: string) {
+    const seguro = path.basename(nome);
+  
+    if (seguro !== nome || seguro === "." || seguro === "..") {
+>     throw new Error(`Nome de arquivo invalido: ${nome}`);
+    }
+  
+>   return path.join(DRIVE_CACHE_DIR, seguro);
+  }
+  
+  function lerCacheValido(
+    nome: string,
+>   arquivo: ArquivoDrive
+> ): Buffer | null {
+    const destino = caminhoCache(nome);
+    const marcador = `${destino}.version`;
+  
+    if (!fs.existsSync(destino) || !fs.existsSync(marcador)) {
+      return null;
+    }
+  
+    try {
+>     const versao = fs.readFileSync(marcador, "utf8");
+  
+>     if (versao !== versaoArquivo(arquivo)) {
+        return null;
+      }
+  
+      const tamanho = fs.statSync(destino).size;
+  
+>     if (tamanho !== Number(arquivo.tamanho)) {
+        return null;
+      }
+  
+>     return validarArquivo(nome, fs.readFileSync(destino));
+    } catch {
+      return null;
+    }
+  }
+  
+  function salvarCache(
+    nome: string,
+>   arquivo: ArquivoDrive,
+>   buffer: Buffer
+  ) {
+>   fs.mkdirSync(DRIVE_CACHE_DIR, { recursive: true });
+  
+    const destino = caminhoCache(nome);
+    const marcador = `${destino}.version`;
+  
+    const temporario =
+      `${marcador}.${process.pid}.${Date.now()}.tmp`;
+  
+    try {
+>     fs.writeFileSync(temporario, buffer);
+      fs.writeFileSync(
+        marcadorTemporario,
+>       versaoArquivo(arquivo),
+        "utf8"
+      );
+  
+>     // Preserva o arquivo antigo ate o novo download
+      // ter sido recebido e validado.
+      fs.renameSync(temporario, destino);
+      fs.renameSync(marcadorTemporario, marcador);
+    } finally {
+      if (fs.existsSync(temporario)) {
+    }
+  }
+  
+> async function baixarDriveComCache(
+    nome: string
+> ): Promise<Buffer> {
+>   const arquivo = arquivoDrive(nome);
+  
+>   if (!arquivo) {
+>     throw new Error(`Arquivo nao encontrado no Drive: ${nome}`);
+    }
+  
+>   const cache = lerCacheValido(nome, arquivo);
+  
+    if (cache) {
+>     console.log(`[DRIVE CACHE] Reutilizando ${nome}`);
+      return cache;
+    }
+  
+>   const chave = `${nome}:${versaoArquivo(arquivo)}`;
+  
+    const downloadExistente = downloadsAtivos.get(chave);
+  
+    if (downloadExistente) {
+      return downloadExistente;
+    }
+  
+    const download = (async () => {
+>     console.log(`[DRIVE] Baixando ${nome}`);
+  
+>     const buffer = validarArquivo(
+        nome,
+>       await drive.baixarArquivo(arquivo) as Buffer
+      );
+  
+>     if (buffer.length !== Number(arquivo.tamanho)) {
+        throw new Error(`Tamanho incorreto: ${nome}`);
+      }
+  
+>     salvarCache(nome, arquivo, buffer);
+  
+      console.log(
+>       `[DRIVE CACHE] Atualizado ${nome} (${buffer.length} bytes)`
+      );
+  
+>     return buffer;
+    })();
+  
+    downloadsAtivos.set(chave, download);
+  
+    try {
+    }
+  }
+  
+> export async function lerArquivoComercial(
+    nome: string
+> ): Promise<Buffer> {
+    const fonte = (
+      process.env.KIDY_DATA_SOURCE || "github"
+    ).toLowerCase();
+  
+>   if (fonte === "drive") {
+>     return baixarDriveComCache(nome);
+    }
+  
+    const url = `${GITHUB_RAW}/${nome
+      .split("/")
+      .map(encodeURIComponent)
+      );
+    }
+  
+>   return validarArquivo(
+      nome,
+>     Buffer.from(await resposta.arrayBuffer())
+    );
+  }
+  
+> export async function prepararParquetsDrive() {
+>   fs.mkdirSync(DRIVE_CACHE_DIR, { recursive: true });
+  
+>   for (const nome of PARQUETS) {
+>     const arquivo = arquivoDrive(nome);
+  
+>     if (!arquivo) {
+>       throw new Error(`Parquet ausente no Drive: ${nome}`);
+      }
+  
+      const destino = caminhoCache(nome);
+      const marcador = `${destino}.version`;
+  
+      if (
+        fs.existsSync(destino) &&
+        fs.existsSync(marcador) &&
+>       fs.readFileSync(marcador, "utf8") ===
+>         versaoArquivo(arquivo) &&
+>       fs.statSync(destino).size === Number(arquivo.tamanho)
+      ) {
+>       console.log(`[DRIVE CACHE] Reutilizando ${nome}`);
+        continue;
+      }
+  
+>     await baixarDriveComCache(nome);
+    }
+  }
+  
+> export function pastaParquets() {
+    return (
+      process.env.KIDY_DATA_SOURCE || "github"
+>   ).toLowerCase() === "drive"
+>     ? DRIVE_CACHE_DIR
+      : path.join(process.cwd(), "data");
+  }
+
+
+
+
+========== src\lib\google-drive-data.cjs ==========
+
+  const crypto = require("crypto");
+  
+  const NOMES_OFICIAIS = [
+>   "DADOS PREDITIVA CLIENTES.xlsx",
+>   "DADOS_PREDITIVA_1.parquet",
+>   "DADOS_PREDITIVA_2.parquet",
+>   "DADOS_PREDITIVA_3.parquet",
+>   "DADOS_PREDITIVA_4.parquet",
+>   "DADOS_PREDITIVA_5.parquet",
+>   "DADOS_PREDITIVA_6.parquet",
+    "base clientes.xlsx",
+    "REP MONTAR ANALISES_ATUALIZADO 2026.xlsx",
+    "DADOS PRDITIVA LIMITE.xlsx",
+>   "DADOS PREDITIVA PRODUTOS EM LINHA.xlsx",
+    "NOME_REFERENCIAS.xlsx",
+    "municipios_com_lat_lon.csv",
+    "META ENTRADA.xlsx",
+    "META FATURAMENTO.xlsx",
+    "MATINAL COMERIAL.xlsx",
+    "INDICADORES COMERCIAIS POR  FATURAMENTO.xlsx"];
+  
+  function configuracao() {
+>   const url = process.env.KIDY_DRIVE_API_URL;
+>   const token = process.env.KIDY_DRIVE_API_TOKEN;
+  
+    if (!url || !token) {
+>     throw new Error("VariÃ¡veis KIDY_DRIVE_API_URL e KIDY_DRIVE_API_TOKEN nÃ£o configuradas.");
+    }
+  
+    return { url, token };
+  }
+  
+      });
+  
+      if (!resposta.ok) {
+>       throw new Error(`Google Drive HTTP ${resposta.status}`);
+      }
+  
+      const dados = await resposta.json();
+  
+      if (!dados.sucesso) {
+>       throw new Error(dados.erro || "Falha na API Google Drive");
+      }
+  
+      return dados;
+    } finally {
+      clearTimeout(timeout);
+    }
+  }
+  
+> async function listarArquivos() {
+    const resultado = await chamarAPI("listar");
+  
+>   if (!Array.isArray(resultado.arquivos)) {
+>     throw new Error("Lista de arquivos invÃ¡lida.");
+    }
+  
+>   return resultado.arquivos.filter(
+>     arquivo =>
+>       arquivo.caminho === arquivo.nome &&
+>       NOMES_OFICIAIS.includes(arquivo.nome)
+    );
+  }
+  
+> async function baixarArquivo(arquivo) {
+>   const totalEsperado = Number(arquivo.tamanho);
+  
+    if (
+>     !arquivo.id ||
+      !Number.isSafeInteger(totalEsperado) ||
+      totalEsperado <= 0
+    ) {
+>     throw new Error(`Metadados invÃ¡lidos: ${arquivo.nome}`);
+    }
+  
+    const partes = [];
+    let totalPartes = null;
+    let tamanhoRecebido = 0;
+      totalPartes === null || parte < totalPartes;
+      parte++
+    ) {
+>     const resposta = await chamarAPI("arquivo", {
+>       id: arquivo.id,
+        parte
+      });
+  
+      const quantidade = Number(resposta.totalPartes);
+  
+        quantidade < 1 ||
+        (totalPartes !== null && quantidade !== totalPartes)
+      ) {
+>       throw new Error(`Quantidade de partes invÃ¡lida: ${arquivo.nome}`);
+      }
+  
+      totalPartes = quantidade;
+  
+      const base64 = resposta.base64 ?? resposta.conteudo;
+        !/^[A-Za-z0-9+/]*={0,2}$/.test(base64) ||
+        base64.length % 4 !== 0
+      ) {
+>       throw new Error(`Base64 invÃ¡lido: ${arquivo.nome}`);
+      }
+  
+>     const buffer = Buffer.from(base64, "base64");
+  
+>     if (!buffer.length) {
+>       throw new Error(`Parte vazia: ${arquivo.nome}`);
+      }
+  
+>     partes.push(buffer);
+>     tamanhoRecebido += buffer.length;
+  
+      if (tamanhoRecebido > totalEsperado) {
+>       throw new Error(`Arquivo excedeu tamanho esperado: ${arquivo.nome}`);
+      }
+    }
+  
+>   const buffer = Buffer.concat(partes);
+  
+>   if (buffer.length !== totalEsperado) {
+      throw new Error(
+>       `Tamanho incorreto: ${arquivo.nome}. ` +
+>       `Esperado ${totalEsperado}, recebido ${buffer.length}`
+      );
+    }
+  
+>   if (arquivo.nome.toLowerCase().endsWith(".parquet")) {
+      if (
+>       buffer.subarray(0, 4).toString("ascii") !== "PAR1" ||
+>       buffer.subarray(-4).toString("ascii") !== "PAR1"
+      ) {
+>       throw new Error(`Parquet invÃ¡lido: ${arquivo.nome}`);
+      }
+    }
+  
+>   return buffer;
+  }
+  
+> function calcularHash(buffer) {
+>   return crypto.createHash("sha256").update(buffer).digest("hex");
+  }
+  
+  async function testarBases() {
+>   const arquivos = await listarArquivos();
+  
+    console.log("");
+>   console.log("KIDY SALES INTELLIGENCE - GOOGLE DRIVE");
+>   console.log("Arquivos oficiais encontrados:", arquivos.length);
+    console.log("");
+  
+    const resultados = [];
+  
+    for (const nome of NOMES_OFICIAIS) {
+>     const arquivo = arquivos.find(x => x.nome === nome);
+  
+>     if (!arquivo) {
+        resultados.push({
+>         arquivo: nome,
+          status: "AUSENTE",
+          bytes: 0,
+          sha256: ""
+        });
+        continue;
+      try {
+        console.log("Baixando:", nome);
+  
+>       const buffer = await baixarArquivo(arquivo);
+  
+        resultados.push({
+>         arquivo: nome,
+          status: "OK",
+>         bytes: buffer.length,
+>         sha256: calcularHash(buffer)
+        });
+  
+        console.log("VALIDADO:", nome);
+      } catch (erro) {
+        resultados.push({
+>         arquivo: nome,
+          status: "ERRO",
+          bytes: 0,
+          sha256: ""
+        });
+  
+  
+    console.log("");
+    console.table(
+>     resultados.map(({ arquivo, status, bytes }) => ({
+>       arquivo,
+        status,
+        bytes
+      }))
+    );
+  
+    const aprovados = resultados.filter(x => x.status === "OK").length;
+  
+>   console.log(`RESULTADO: ${aprovados}/${NOMES_OFICIAIS.length} arquivos validados`);
+  
+    return resultados;
+  }
+  
+> module.exports = {
+    NOMES_OFICIAIS,
+    chamarAPI,
+>   listarArquivos,
+>   baixarArquivo,
+    calcularHash,
+    testarBases
+  };
+
+
+

@@ -496,7 +496,7 @@ export async function carregarCarteira2027() {
     carregamento = processar().then(resultado => {
       cache = {
         data: dia,
-        expira: Date.now() + 15 * 60 * 1000,
+        expira: Date.now() + 30 * 60 * 1000,
         ...resultado,
       };
       return resultado;

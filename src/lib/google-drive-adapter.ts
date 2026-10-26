@@ -33,7 +33,7 @@ let arquivosAtuais = new Map<string, ArquivoDrive>();
 
 const downloadsAtivos = new Map<string, Promise<Buffer>>();
 
-const CATALOGO_CACHE_MS = 15 * 60 * 1000;
+const CATALOGO_CACHE_MS = 30 * 60 * 1000;
 
 let catalogoAtualizadoEm = 0;
 let consultaCatalogoEmAndamento: Promise<ArquivoDrive[]> | null = null;
@@ -303,7 +303,7 @@ export async function lerArquivoComercial(
 export async function prepararParquetsDrive() {
   fs.mkdirSync(DRIVE_CACHE_DIR, { recursive: true });
 
-  for (const nome of PARQUETS) {
+  const pendentes = PARQUETS.filter(nome => {
     const arquivo = arquivoDrive(nome);
 
     if (!arquivo) {
@@ -313,21 +313,25 @@ export async function prepararParquetsDrive() {
     const destino = caminhoCache(nome);
     const marcador = `${destino}.version`;
 
-    if (
+    const valido =
       fs.existsSync(destino) &&
       fs.existsSync(marcador) &&
-      fs.readFileSync(marcador, "utf8") ===
-        versaoArquivo(arquivo) &&
-      fs.statSync(destino).size === Number(arquivo.tamanho)
-    ) {
+      fs.readFileSync(marcador, "utf8") === versaoArquivo(arquivo) &&
+      fs.statSync(destino).size === Number(arquivo.tamanho);
+
+    if (valido) {
       console.log(`[DRIVE CACHE] Reutilizando ${nome}`);
-      continue;
     }
 
-    await baixarDriveComCache(nome);
+    return !valido;
+  });
+
+  for (let i = 0; i < pendentes.length; i += 3) {
+    await Promise.all(
+      pendentes.slice(i, i + 3).map(nome => baixarDriveComCache(nome))
+    );
   }
 }
-
 export function pastaParquets() {
   return (
     process.env.KIDY_DATA_SOURCE || "github"

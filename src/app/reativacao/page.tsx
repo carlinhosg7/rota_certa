@@ -285,18 +285,7 @@ export default async function RankingReativacao({
   const filtroSup = codigo(parametro(params, "supervisor"));
   const busca = parametro(params, "busca");
 
-  const inicioRanking = Date.now();
-
-  // Inicia as duas leituras pesadas em paralelo.
-  const dadosPromise = getData();
-
   const base = await carregarCarteira2027();
-
-  console.log(
-    "[REATIVACAO] Carteira carregada em",
-    Date.now() - inicioRanking,
-    "ms"
-  );
   let clientes = base.clientes as Cliente[];
 
   // Segurança aplicada antes de qualquer filtro solicitado.
@@ -386,15 +375,9 @@ export default async function RankingReativacao({
   const conjunto = new Set(codigos);
 
   const [dados, manuais] = await Promise.all([
-    dadosPromise,
+    getData(),
     prioridadesManuais(codigos),
   ]);
-
-  console.log(
-    "[REATIVACAO] Bases e prioridades prontas em",
-    Date.now() - inicioRanking,
-    "ms"
-  );
 
   const estatisticas = new Map<string, Estatistica>();
 
@@ -427,12 +410,6 @@ export default async function RankingReativacao({
       e.pedidos.add(String(venda.numeroPedido));
     }
   }
-
-  console.log(
-    "[REATIVACAO] Historico processado em",
-    Date.now() - inicioRanking,
-    "ms"
-  );
 
   const hoje = Date.now();
 

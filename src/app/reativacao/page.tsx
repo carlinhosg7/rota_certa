@@ -97,7 +97,65 @@ function parametro(
   return (typeof v === "string" ? v : "").trim().slice(0, 120);
 }
 
+let cachePrioridades:
+  | {
+      expira: number;
+      dados: Map<string, Prioridade>;
+      chave: string;
+    }
+  | undefined;
+
+let promessaPrioridades:
+  | Promise<Map<string, Prioridade>>
+  | undefined;
+
+let chavePromessaPrioridades = "";
+
 async function prioridadesManuais(
+  codigos: string[]
+): Promise<Map<string, Prioridade>> {
+  const chave = [...new Set(codigos)].sort().join("|");
+
+  if (
+    cachePrioridades &&
+    cachePrioridades.chave === chave &&
+    Date.now() < cachePrioridades.expira
+  ) {
+    return cachePrioridades.dados;
+  }
+
+  if (
+    promessaPrioridades &&
+    chavePromessaPrioridades === chave
+  ) {
+    return promessaPrioridades;
+  }
+
+  chavePromessaPrioridades = chave;
+
+  const tarefa = consultarPrioridadesManuais(codigos)
+    .then(dados => {
+      cachePrioridades = {
+        expira: Date.now() + 60_000,
+        dados,
+        chave,
+      };
+
+      return dados;
+    })
+    .finally(() => {
+      if (promessaPrioridades === tarefa) {
+        promessaPrioridades = undefined;
+        chavePromessaPrioridades = "";
+      }
+    });
+
+  promessaPrioridades = tarefa;
+
+  return tarefa;
+}
+
+async function consultarPrioridadesManuais(
   codigos: string[]
 ): Promise<Map<string, Prioridade>> {
   const inicio = Date.now();

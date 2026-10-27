@@ -481,29 +481,50 @@ async function processar() {
   return { clientes, resumo };
 }
 
-export async function carregarCarteira2027() {
-  const agora = Date.now();
-  const dia = hojeSP();
+export async function gerarCarteira2027DoDrive() {
+  return processar();
+}
+type ResultadoCarteira2027 = {
+  clientes: ClienteCarteira[];
+  resumo: Record<string, unknown>;
+};
 
-  if (cache && cache.data === dia && cache.expira > agora) {
-    return {
-      clientes: cache.clientes,
-      resumo: cache.resumo,
-    };
+let cacheSupabase:
+  | {
+      expira: number;
+      resultado: ResultadoCarteira2027;
+    }
+  | undefined;
+
+let carregamentoSupabase:
+  | Promise<ResultadoCarteira2027>
+  | undefined;
+
+export async function carregarCarteira2027(): Promise<ResultadoCarteira2027> {
+  const agora = Date.now();
+
+  if (cacheSupabase && cacheSupabase.expira > agora) {
+    return cacheSupabase.resultado;
   }
 
-  if (!carregamento) {
-    carregamento = processar().then(resultado => {
-      cache = {
-        data: dia,
+  if (!carregamentoSupabase) {
+    carregamentoSupabase = (async () => {
+      const { lerSnapshotCarteira } = await import(
+        "./carteira-snapshot-supabase"
+      );
+
+      const resultado = await lerSnapshotCarteira();
+
+      cacheSupabase = {
         expira: Date.now() + 30 * 60 * 1000,
-        ...resultado,
+        resultado,
       };
+
       return resultado;
-    }).finally(() => {
-      carregamento = undefined;
+    })().finally(() => {
+      carregamentoSupabase = undefined;
     });
   }
 
-  return carregamento;
+  return carregamentoSupabase;
 }

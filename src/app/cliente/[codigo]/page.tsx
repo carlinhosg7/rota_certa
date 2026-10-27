@@ -1,3 +1,9 @@
+import {
+  buscarVendasCliente360,
+  buscarPerfis360,
+} from "@/lib/visao360-supabase";
+import { normalizarRepresentante } from "@/lib/representantes-oficiais";
+import type { Venda } from "@/lib/comercial-data";
 import { calcularPrioridadeCliente } from "@/lib/prioridade-cliente";
 import { obterPrioridade } from "@/lib/prioridade-cliente-db";
 import { MessageCircle, Phone, Mail, MapPin } from "lucide-react";
@@ -13,8 +19,8 @@ import { obterClassificacoes } from "@/lib/classificacoes-db";
 import { carregarCarteira2027 } from "@/lib/carteira-2027-data";
 import type { CodigoClassificacao } from "@/lib/classificacoes";
 import {
-  getData,
-  getIndiceVendas,
+  carregarCarteiraOficial360,
+
   cleanCode,
   cleanReferencia,
   MAPA_SUPERVISORES,
@@ -70,11 +76,20 @@ export default async function ClientePage({ params }: Props) {
   // ============================================================
 
   const inicioDados = performance.now();
-  const dados = await getData();
-  const { carteira, vendas, produtosAutorizados, nomesReferencias } = dados;
-  console.log("[PERFORMANCE CLIENTE] getData:", Math.round(performance.now() - inicioDados), "ms");
-
   const codigoLimpo = cleanCode(codigo);
+
+  const {
+    carteira,
+    produtosAutorizados,
+    nomesReferencias,
+    mapaRepresentantes,
+  } = await carregarCarteiraOficial360();
+
+  console.log(
+    "[PERFORMANCE CLIENTE] bases leves:",
+    Math.round(performance.now() - inicioDados),
+    "ms"
+  );
 
   const cliente = carteira.find(
     (c) => cleanCode(c.codigo) === codigoLimpo
@@ -106,8 +121,24 @@ export default async function ClientePage({ params }: Props) {
   // HISTÓRICO DO CLIENTE
   // ============================================================
 
-  const vendasCliente = vendas
-    .filter((v) => cleanCode(v.codigo) === codigoLimpo)
+  const inicioVendas360 = performance.now();
+
+  const vendasDoCliente = await buscarVendasCliente360(codigoLimpo);
+
+  for (const v of vendasDoCliente) {
+    const oficial = normalizarRepresentante(v.rep, mapaRepresentantes);
+    v.rep = oficial.codigo;
+    if (oficial.supervisor) v.sup = oficial.supervisor;
+  }
+
+  console.log(
+    "[PERFORMANCE CLIENTE] vendas Supabase:",
+    vendasDoCliente.length,
+    Math.round(performance.now() - inicioVendas360),
+    "ms"
+  );
+  const vendasCliente = vendasDoCliente
+    
     .filter((v) => v.data)
     .sort(
       (a, b) =>
@@ -116,8 +147,8 @@ export default async function ClientePage({ params }: Props) {
     );
 
   
-  const vendasLimite360 = vendas
-    .filter(v => cleanCode(v.codigo) === codigoLimpo)
+  const vendasLimite360 = vendasDoCliente
+    
     .sort((a, b) => {
       const da = (a.dataEntrega ?? a.data)?.getTime() ?? 0;
       const db = (b.dataEntrega ?? b.data)?.getTime() ?? 0;
@@ -142,7 +173,7 @@ export default async function ClientePage({ params }: Props) {
   const limiteDisponivel360 = obterLimite360("limiteDisponivel");
 const janelaComercial = await calcularJanelaCompraFaturamento(
     codigoLimpo,
-    vendas.filter(v => cleanCode(v.codigo) === codigoLimpo)
+    vendasDoCliente
   );
   const maximoJanela = Math.max(
     1,
@@ -304,13 +335,8 @@ const janelaComercial = await calcularJanelaCompraFaturamento(
     carteira.map((c) => [cleanCode(c.codigo), c])
   );
 
-  const vendasPorCliente = getIndiceVendas(dados);
+  const perfisHistoricos = await buscarPerfis360();
 
-  console.log(
-    "[PERFORMANCE CLIENTE] indice vendas:",
-    Math.round(performance.now() - inicioIndice),
-    "ms"
-  );
   function proximidadeLog(a: number, b: number) {
     if (a <= 0 && b <= 0) return 1;
     if (a <= 0 || b <= 0) return 0;
@@ -318,37 +344,99 @@ const janelaComercial = await calcularJanelaCompraFaturamento(
     return Math.max(0, 1 - dif / 4);
   }
 
-  const candidatosSemelhantes = [...vendasPorCliente.entries()]
-    .map(([cod, vs]) => {
+  const candidatosSemelhantes = perfisHistoricos
+    .map((perfil) => {
+      const cod = cleanCode(perfil.codigo_cliente);
+
       if (cod === codigoLimpo) return null;
+
       const cad = carteiraPorCodigo.get(cod);
-      if (!cad || !vs.length) return null;
 
-      const valor = vs.reduce((s, v) => s + (v.vlr || 0), 0);
-      const pares = vs.reduce((s, v) => s + (v.qtd || 0), 0);
-      const pedidos = new Set(vs.map((v) => v.numeroPedido).filter(Boolean)).size;
-      const mix = new Set(vs.map((v) => v.codigoLinha || v.linha).filter(Boolean)).size;
+      if (!cad) return null;
 
-      const mesmaRegional = cad.sup && cliente.sup && cad.sup === cliente.sup ? 1 : 0;
-      const mesmoRep = cad.rep && cliente.rep && cad.rep === cliente.rep ? 1 : 0;
+      const mesmaRegional =
+        cad.sup && cliente.sup && cad.sup === cliente.sup ? 1 : 0;
+
+      const mesmoRep =
+        cad.rep && cliente.rep && cad.rep === cliente.rep ? 1 : 0;
 
       const scoreSimilaridade =
-        proximidadeLog(valor, perfilCliente.valorHistorico) * 0.30 +
-        proximidadeLog(pares, perfilCliente.paresHistorico) * 0.25 +
-        proximidadeLog(pedidos, perfilCliente.pedidos) * 0.20 +
-        proximidadeLog(mix, perfilCliente.mix) * 0.15 +
+        proximidadeLog(
+          perfil.valor_historico,
+          perfilCliente.valorHistorico
+        ) * 0.30 +
+        proximidadeLog(
+          perfil.pares_historico,
+          perfilCliente.paresHistorico
+        ) * 0.25 +
+        proximidadeLog(
+          perfil.pedidos,
+          perfilCliente.pedidos
+        ) * 0.20 +
+        proximidadeLog(
+          perfil.mix,
+          perfilCliente.mix
+        ) * 0.15 +
         mesmaRegional * 0.08 +
         mesmoRep * 0.02;
 
-      return { codigo: cod, vendas: vs, scoreSimilaridade };
+      return {
+        codigo: cod,
+        vendas: [] as Venda[],
+        scoreSimilaridade,
+      };
     })
     .filter((x): x is NonNullable<typeof x> => !!x)
     .sort((a, b) => b.scoreSimilaridade - a.scoreSimilaridade)
     .slice(0, 40);
 
-  const similares = candidatosSemelhantes.filter((x) => x.scoreSimilaridade >= 0.45);
-  const grupoSimilar = similares.length >= 10 ? similares : candidatosSemelhantes.slice(0, 20);
+  // Carrega somente as vendas dos 40 clientes selecionados.
+  // Limita a concorrencia para nao sobrecarregar o Supabase.
+  for (let inicio = 0; inicio < candidatosSemelhantes.length; inicio += 8) {
+    const grupo = candidatosSemelhantes.slice(inicio, inicio + 8);
 
+    const resultados = await Promise.all(
+      grupo.map((c) => buscarVendasCliente360(c.codigo))
+    );
+
+    resultados.forEach((vendas, indice) => {
+      for (const v of vendas) {
+        const oficial = normalizarRepresentante(
+          v.rep,
+          mapaRepresentantes
+        );
+
+        v.rep = oficial.codigo;
+
+        if (oficial.supervisor) {
+          v.sup = oficial.supervisor;
+        }
+      }
+
+      grupo[indice].vendas = vendas;
+    });
+  }
+
+  const candidatosComVendas = candidatosSemelhantes.filter(
+    (c) => c.vendas.length > 0
+  );
+
+  const similares = candidatosComVendas.filter(
+    (x) => x.scoreSimilaridade >= 0.45
+  );
+
+  const grupoSimilar =
+    similares.length >= 10
+      ? similares
+      : candidatosComVendas.slice(0, 20);
+
+  console.log(
+    "[PERFORMANCE CLIENTE] similaridade Supabase:",
+    candidatosComVendas.length,
+    "clientes em",
+    Math.round(performance.now() - inicioIndice),
+    "ms"
+  );
   type PotencialLinha = {
     chave: string;
     codigoLinha: string;
@@ -835,7 +923,7 @@ const janelaComercial = await calcularJanelaCompraFaturamento(
   }
   // Escolhas humanas gravadas prevalecem sobre sugestoes; [] significa desmarcou tudo.
   const prioridadeCalculada = calcularPrioridadeCliente(
-    vendas.filter(v => cleanCode(v.codigo) === codigoLimpo),
+    vendasDoCliente,
     limiteDisponivel360
   );
 

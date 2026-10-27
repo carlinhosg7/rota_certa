@@ -1320,6 +1320,76 @@ function registrarMemoria(etapa: string): void {
     arrayBuffersMB: mb(m.arrayBuffers),
   });
 }
+
+// Bases comerciais leves para a Visao 360.
+// Nao realiza leitura de Parquets.
+export async function carregarBasesLeves360() {
+  // Inicializar o catalogo do Drive antes de ler os arquivos.
+  // Nao prepara nem carrega os Parquets de vendas.
+  if (
+    (process.env.KIDY_DATA_SOURCE || "github").toLowerCase() === "drive"
+  ) {
+    await atualizarCatalogoDrive();
+  } else {
+    await prepararBasesGitHub();
+  }
+
+  const [carteira, financeiro, produtosAutorizados, nomesReferencias, mapaRepresentantes] = await Promise.all([
+    carregarCarteiraBase(),
+    carregarFinanceiro(),
+    carregarProdutosAutorizados(),
+    carregarNomesReferencias(),
+    carregarMapaRepresentantes()
+  ]);
+
+  return {
+    carteira,
+    financeiro,
+    produtosAutorizados,
+    nomesReferencias,
+    mapaRepresentantes
+  };
+}
+
+// Carteira normalizada para a Visao 360, sem carregar Parquets.
+export async function carregarCarteiraOficial360() {
+  const bases = await carregarBasesLeves360();
+  const { carteira, financeiro, mapaRepresentantes } = bases;
+
+  for (const c of carteira) {
+    const oficial = normalizarRepresentante(c.rep, mapaRepresentantes);
+    c.rep = oficial.codigo;
+    if (oficial.supervisor) c.sup = oficial.supervisor;
+  }
+
+  const normalizada = new Map<string, (typeof carteira)[number]>();
+  for (const c of carteira) {
+    normalizada.set(c.codigo + "|" + c.rep, c);
+  }
+
+  const carteiraFinal = [...normalizada.values()];
+
+  for (const c of carteiraFinal) {
+    const regional = normalizarRepresentante(
+      c.rep, mapaRepresentantes
+    ).supervisor;
+
+    c.sup = regional || cleanSupervisor(c.sup);
+
+    const f = financeiro.get(c.codigo);
+    if (f) {
+      c.limite = f.limite;
+      c.bloqueio = f.bloqueio;
+    }
+  }
+
+  return {
+    carteira: carteiraFinal,
+    produtosAutorizados: bases.produtosAutorizados,
+    nomesReferencias: bases.nomesReferencias,
+    mapaRepresentantes: bases.mapaRepresentantes
+  };
+}
 async function carregarDadosAtualizados(): Promise<Cache> {
   registrarMemoria('INICIO');
       const inicioTotal = performance.now();

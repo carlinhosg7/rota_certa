@@ -1,5 +1,6 @@
 import {
   buscarVendasCliente360,
+  buscarVendasClientes360,
   buscarPerfis360,
 } from "@/lib/visao360-supabase";
 import { normalizarRepresentante } from "@/lib/representantes-oficiais";
@@ -147,7 +148,7 @@ export default async function ClientePage({ params }: Props) {
     );
 
   
-  const vendasLimite360 = vendasDoCliente
+  const vendasLimite360 = [...vendasDoCliente]
     
     .sort((a, b) => {
       const da = (a.dataEntrega ?? a.data)?.getTime() ?? 0;
@@ -390,31 +391,29 @@ const janelaComercial = await calcularJanelaCompraFaturamento(
     .sort((a, b) => b.scoreSimilaridade - a.scoreSimilaridade)
     .slice(0, 40);
 
-  // Carrega somente as vendas dos 40 clientes selecionados.
-  // Limita a concorrencia para nao sobrecarregar o Supabase.
-  for (let inicio = 0; inicio < candidatosSemelhantes.length; inicio += 8) {
-    const grupo = candidatosSemelhantes.slice(inicio, inicio + 8);
+  // Consulta agrupada dos clientes semelhantes.
+  const mapaVendasSemelhantes = await buscarVendasClientes360(
+    candidatosSemelhantes.map((c) => c.codigo)
+  );
 
-    const resultados = await Promise.all(
-      grupo.map((c) => buscarVendasCliente360(c.codigo))
-    );
+  for (const candidato of candidatosSemelhantes) {
+    const vendas =
+      mapaVendasSemelhantes.get(candidato.codigo) ?? [];
 
-    resultados.forEach((vendas, indice) => {
-      for (const v of vendas) {
-        const oficial = normalizarRepresentante(
-          v.rep,
-          mapaRepresentantes
-        );
+    for (const v of vendas) {
+      const oficial = normalizarRepresentante(
+        v.rep,
+        mapaRepresentantes
+      );
 
-        v.rep = oficial.codigo;
+      v.rep = oficial.codigo;
 
-        if (oficial.supervisor) {
-          v.sup = oficial.supervisor;
-        }
+      if (oficial.supervisor) {
+        v.sup = oficial.supervisor;
       }
+    }
 
-      grupo[indice].vendas = vendas;
-    });
+    candidato.vendas = vendas;
   }
 
   const candidatosComVendas = candidatosSemelhantes.filter(

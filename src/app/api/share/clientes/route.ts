@@ -1,3 +1,4 @@
+import { podeAcessarShare, ehAdminShare, pertenceRepresentanteShare } from "@/lib/share-acesso";
 import { cookies } from "next/headers";
 import { validarToken } from "@/lib/auth";
 import { NextRequest, NextResponse } from "next/server";
@@ -36,7 +37,7 @@ export async function GET(req: NextRequest) {
     );
   }
 
-  if (String(usuario.perfil ?? "").toUpperCase() !== "ADMIN") {
+  if (!podeAcessarShare(usuario)) {
     return NextResponse.json(
       { erro: "Sem permissao" }, { status: 403 }
     );
@@ -45,11 +46,15 @@ export async function GET(req: NextRequest) {
   try {
     const buffer = await lerArquivoComercial("share-clientes.json");
     const dados = JSON.parse(buffer.toString("utf8")) as Base;
+    const basePermitida: Base = ehAdminShare(usuario) ? dados : Object.fromEntries(
+      Object.entries(dados).map(([ibge, clientes]) => [ibge, clientes.filter(c => pertenceRepresentanteShare(usuario, c.codigo_representante))])
+        .filter(([, clientes]) => clientes.length > 0)
+    );
 
     if (req.nextUrl.searchParams.get("modo") === "contagem") {
       const contagens: Record<string, number> = {};
 
-      for (const [ibge, clientes] of Object.entries(dados)) {
+      for (const [ibge, clientes] of Object.entries(basePermitida)) {
         contagens[ibge] = new Set(
           clientes.map(c => String(c.codigo))
         ).size;
@@ -66,7 +71,7 @@ export async function GET(req: NextRequest) {
       );
     }
 
-    const clientes = dados[ibge] ?? [];
+    const clientes = basePermitida[ibge] ?? [];
 
     return NextResponse.json({
       clientes,

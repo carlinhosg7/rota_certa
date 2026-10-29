@@ -22,7 +22,7 @@ export default async function SharePage() {
 
   const perfil = String(usuario.perfil || "").toUpperCase();
 
-  if (perfil !== "ADMIN") {
+  if (!["ADMIN", "REPRESENTANTE", "REP"].includes(perfil) || (perfil !== "ADMIN" && !String(usuario.codigo_representante ?? "").trim())) {
     redirect("/dashboard");
   }
 

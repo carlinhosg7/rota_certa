@@ -26,7 +26,12 @@ const NOMES_OFICIAIS = [
   "META ENTRADA C KIDEX.xlsx",
   "META FATURAMENTO.xlsx",
   "MATINAL COMERIAL.xlsx",
-  "INDICADORES COMERCIAIS POR  FATURAMENTO.xlsx"];
+  "INDICADORES COMERCIAIS POR  FATURAMENTO.xlsx",
+  "share-municipios.json",
+  "share-vendas-anuais.json",
+  "share-clientes.json",
+  "share-potencial-clientes.json",
+];
 
 function configuracao() {
   const url = process.env.KIDY_DRIVE_API_URL;

@@ -1,3 +1,4 @@
+import { podeAcessarShare, ehAdminShare, pertenceRepresentanteShare } from "@/lib/share-acesso";
 import { cookies } from "next/headers";
 import { validarToken } from "@/lib/auth";
 import { NextResponse } from "next/server";
@@ -43,7 +44,7 @@ export async function GET() {
     );
   }
 
-  if (String(usuario.perfil ?? "").toUpperCase() !== "ADMIN") {
+  if (!podeAcessarShare(usuario)) {
     return NextResponse.json(
       { erro: "Sem permissao" }, { status: 403 }
     );
@@ -59,11 +60,21 @@ export async function GET() {
       throw new Error("Base municipal vazia ou invalida");
     }
 
-    const cidades = municipios.map(c => {
+    const municipiosPermitidos = ehAdminShare(usuario) ? municipios : await (async () => {
+      const cadastro = await lerJSON<Record<string, { codigo_representante: string }[]>>("share-clientes.json");
+      const codigos = new Set(Object.entries(cadastro)
+        .filter(([, clientes]) => clientes.some(c => pertenceRepresentanteShare(usuario, c.codigo_representante)))
+        .map(([ibge]) => ibge));
+      return municipios.filter(c => codigos.has(String(c.codigo_ibge)));
+    })();
+
+    const cidades = municipiosPermitidos.map(c => {
       const historico = vendas[String(c.codigo_ibge)] ?? {};
 
       return {
         ...c,
+        representante_codigo: ehAdminShare(usuario) ? c.representante_codigo : String(usuario.codigo_representante ?? ''),
+        representante: ehAdminShare(usuario) ? c.representante : String(usuario.nome ?? ''),
         gerente: gerentePorSupervisor(c.supervisor),
         vendas_ano: historico,
         share_medio_historico: calcularShareMedio(

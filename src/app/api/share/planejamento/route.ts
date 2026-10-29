@@ -1,3 +1,4 @@
+import { podeAcessarShare, ehAdminShare, pertenceRepresentanteShare } from "@/lib/share-acesso";
 import { cookies } from "next/headers";
 import { validarToken } from "@/lib/auth";
 import { NextRequest, NextResponse } from "next/server";
@@ -49,7 +50,7 @@ export async function GET(req: NextRequest) {
     );
   }
 
-  if (String(usuario.perfil ?? "").toUpperCase() !== "ADMIN") {
+  if (!podeAcessarShare(usuario)) {
     return NextResponse.json(
       { erro: "Sem permissao" }, { status: 403 }
     );
@@ -59,6 +60,9 @@ export async function GET(req: NextRequest) {
     const dados = await lerJSON<Payload>(
       "share-potencial-clientes.json"
     );
+
+    const cadastroRestrito = ehAdminShare(usuario) ? null :
+      await lerJSON<Record<string, Cliente[]>>("share-clientes.json");
 
     const ibge = req.nextUrl.searchParams.get("ibge");
 
@@ -73,7 +77,7 @@ export async function GET(req: NextRequest) {
         "share-clientes.json"
       );
 
-      const clientes = (cadastro[ibge] ?? []).map(c => ({
+      const clientes = (cadastro[ibge] ?? []).filter(c => pertenceRepresentanteShare(usuario, c.codigo_representante)).map(c => ({
         ...c,
         vendas2025: dados.cidades[ibge]?.[c.codigo]?.["2025"] ?? 0,
         pico: dados.cidades[ibge]?.[c.codigo]?.pico ?? 0,
@@ -89,7 +93,15 @@ export async function GET(req: NextRequest) {
     const cidades: Record<string, [number, number][]> = {};
 
     for (const [cidade, clientes] of Object.entries(dados.cidades)) {
-      cidades[cidade] = Object.values(clientes).map(c => [
+      const codigosPermitidos = cadastroRestrito === null ? null : new Set(
+        (cadastroRestrito[cidade] ?? [])
+          .filter(c => pertenceRepresentanteShare(usuario, c.codigo_representante))
+          .map(c => String(c.codigo))
+      );
+      if (codigosPermitidos !== null && codigosPermitidos.size === 0) continue;
+      cidades[cidade] = Object.entries(clientes)
+        .filter(([codigo]) => codigosPermitidos === null || codigosPermitidos.has(codigo))
+        .map(([, c]) => [
         c["2025"] ?? 0,
         c.pico ?? 0
       ]);

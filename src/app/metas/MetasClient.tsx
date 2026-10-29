@@ -9,6 +9,7 @@ type Indicador = {
   diferenca: number;
   percentual: number;
   faltante: number;
+  realizadoAA?: number | null;
 };
 
 type OpcaoRegional = {
@@ -88,30 +89,51 @@ function Cartao({
   indicador: Indicador;
   moeda: boolean;
 }) {
-  const formatar = moeda
-    ? formatoValores.format.bind(formatoValores)
-    : formatoPares.format.bind(formatoPares);
+  const formatar = (valor: number) =>
+    moeda ? formatoValores.format(valor) : formatoPares.format(valor);
 
   const percentual = Number.isFinite(indicador.percentual)
     ? indicador.percentual
     : 0;
 
+  const possuiAA =
+    typeof indicador.realizadoAA === "number" &&
+    Number.isFinite(indicador.realizadoAA);
+
+  const aa = possuiAA ? indicador.realizadoAA! : 0;
+  const diferencaAA = indicador.realizado - aa;
+
+  const evolucaoAA =
+    possuiAA && aa !== 0
+      ? (diferencaAA / aa) * 100
+      : null;
+
+  const corEvolucao =
+    diferencaAA > 0
+      ? "#16a34a"
+      : diferencaAA < 0
+        ? "#dc2626"
+        : "inherit";
+
   return (
     <article className={styles.card}>
       <div className={styles.cardHeader}>
         <h3>{titulo}</h3>
-        <span className={styles.tag}>{moeda ? "VALORES" : "PARES"}</span>
+        <span className={styles.tag}>
+          {moeda ? "VALORES" : "PARES"}
+        </span>
       </div>
 
       <div className={styles.caption}>Meta oficial</div>
-      <div className={styles.bigNumber}>{formatar(indicador.meta)}</div>
+      <div className={styles.bigNumber}>
+        {formatar(indicador.meta)}
+      </div>
 
       <div className={styles.metrics}>
         <div>
           <span>Realizado</span>
           <strong>{formatar(indicador.realizado)}</strong>
         </div>
-
         <div>
           <span>Faltante</span>
           <strong>{formatar(indicador.faltante)}</strong>
@@ -130,10 +152,64 @@ function Cartao({
       <div className={styles.percentual}>
         {formatoPercentual.format(percentual)}% de atingimento
       </div>
+
+      <div
+        style={{
+          marginTop: 18,
+          paddingTop: 14,
+          borderTop: "1px solid rgba(128,128,128,.25)",
+        }}
+      >
+        <div
+          style={{
+            fontSize: 12,
+            fontWeight: 700,
+            marginBottom: 12,
+            opacity: 0.75,
+          }}
+        >
+          COMPARATIVO ANO ANTERIOR
+        </div>
+
+        {possuiAA ? (
+          <div
+            style={{
+              display: "grid",
+              gridTemplateColumns: "repeat(2, minmax(0, 1fr))",
+              gap: 14,
+            }}
+          >
+            <div>
+              <div className={styles.caption}>Realizado AA</div>
+              <strong>{formatar(aa)}</strong>
+            </div>
+
+            <div>
+              <div className={styles.caption}>Diferença</div>
+              <strong style={{ color: corEvolucao }}>
+                {diferencaAA > 0 ? "+" : ""}
+                {formatar(diferencaAA)}
+              </strong>
+            </div>
+
+            <div style={{ gridColumn: "1 / -1" }}>
+              <div className={styles.caption}>Evolução anual</div>
+              <strong style={{ color: corEvolucao, fontSize: 20 }}>
+                {evolucaoAA === null
+                  ? "Sem base comparável"
+                  : `${evolucaoAA > 0 ? "+" : ""}${formatoPercentual.format(evolucaoAA)}%`}
+              </strong>
+            </div>
+          </div>
+        ) : (
+          <div className={styles.caption}>
+            AA não disponível para este período
+          </div>
+        )}
+      </div>
     </article>
   );
 }
-
 function CaixaAgua({
   titulo,
   indicador,
@@ -215,6 +291,7 @@ function CaixaAgua({
 export default function MetasClient() {
   const [tipo, setTipo] = useState("FATURAMENTO");
   const [periodicidade, setPeriodicidade] = useState("MENSAL");
+  const [visaoKidex, setVisaoKidex] = useState("CADASTRO");
   const [dados, setDados] = useState<Resposta | null>(null);
   const [regional, setRegional] = useState("");
   const [representante, setRepresentante] = useState("");
@@ -236,6 +313,7 @@ export default function MetasClient() {
           tipo,
           periodicidade,
           pedido: "TODOS",
+          ...(tipo === "KIDEX" ? { visao: visaoKidex } : {}),
           regional,
           representante,
         });
@@ -278,7 +356,7 @@ export default function MetasClient() {
     carregar();
 
     return () => controller.abort();
-  }, [tipo, periodicidade, regional, representante]);
+  }, [tipo, periodicidade, regional, representante, visaoKidex]);
 
   return (
     <section className={styles.container}>
@@ -292,6 +370,7 @@ export default function MetasClient() {
           >
             <option value="FATURAMENTO">Faturamento</option>
             <option value="ENTRADA">Entrada de pedidos</option>
+            <option value="KIDEX">KIDEX</option>
           </select>
         </div>
 
@@ -343,6 +422,16 @@ export default function MetasClient() {
         </div>
       </div>
 
+      {tipo === "KIDEX" && (
+        <div className={styles.kidexSwitch}>
+          <label htmlFor="visao-kidex">Visão KIDEX (somente pedido tipo 4)</label>
+          <select id="visao-kidex" value={visaoKidex} onChange={(event) => setVisaoKidex(event.target.value)}>
+            <option value="CADASTRO">Entrada KIDEX — Data de Cadastro</option>
+            <option value="ENTREGA">Venda para Faturamento Dentro do Mês — Data de Entrega</option>
+          </select>
+        </div>
+      )}
+
       {carregando && (
         <div className={styles.message}>Carregando indicadores...</div>
       )}
@@ -355,9 +444,9 @@ export default function MetasClient() {
         <>
           <div className={styles.periodo}>
             <strong>
-              {tipo === "FATURAMENTO"
-                ? "Faturamento"
-                : "Entrada de pedidos"}
+              {tipo === "KIDEX"
+                ? visaoKidex === "CADASTRO" ? "Entrada KIDEX" : "Venda para Faturamento Dentro do Mês"
+                : tipo === "FATURAMENTO" ? "Faturamento" : "Entrada de pedidos"}
               {" — "}
               {periodicidade === "MENSAL" ? "Mensal" : "Semanal"}
             </strong>
@@ -378,7 +467,7 @@ export default function MetasClient() {
             />
           </div>
 
-          <div className={styles.waterGrid}>
+          <div className={`${styles.waterGrid} ${tipo === "FATURAMENTO" ? styles.waterGreen : tipo === "KIDEX" ? styles.waterGray : ""}`}>
             <CaixaAgua
               titulo="Atingimento em valores"
               indicador={dados.indicadores.valores}

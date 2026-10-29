@@ -2,10 +2,12 @@
 import { NextRequest, NextResponse } from "next/server";
 import { cookies } from "next/headers";
 import { validarToken } from "@/lib/auth";
+import { responderKidex } from "@/lib/kidex-api";
 
 import {
   carregarMetas,
   carregarRealizado,
+  carregarRealizadoAA,
   type TipoMeta,
   type PeriodicidadeMeta,
   type RegistroMeta,
@@ -202,6 +204,15 @@ export async function GET(req: NextRequest) {
     const representante = codigo(params.get("representante"));
     const regionalFiltro = codigo(params.get("regional"));
 
+    if (tipo === "KIDEX") {
+      try {
+        return await responderKidex(req, usuario);
+      } catch (erro) {
+        console.error("[KIDEX]", erro);
+        return NextResponse.json({ erro: erro instanceof Error ? erro.message : "Falha ao carregar KIDEX" }, { status: 422 });
+      }
+    }
+
     if (!["FATURAMENTO", "ENTRADA"].includes(tipo)) {
       return NextResponse.json(
         { erro: "Tipo de indicador inválido" },
@@ -268,9 +279,10 @@ export async function GET(req: NextRequest) {
       ? normalizarRepresentante(representante, mapa).codigo
       : "";
 
-    const [metasOriginais, fonte] = await Promise.all([
+    const [metasOriginais, fonte, fonteAA] = await Promise.all([
       carregarMetas(tipoValidado),
       carregarRealizado(tipoValidado, periodoValidado),
+      carregarRealizadoAA(tipoValidado, periodoValidado),
     ]);
 
     const periodoFonte = extrairPeriodo(
@@ -290,6 +302,35 @@ export async function GET(req: NextRequest) {
     }
 
     const { inicio, fim } = periodoFonte;
+
+    // No faturamento, as colunas AA já pertencem ao
+    // mesmo relatório e período da fonte atual.
+    // Na entrada, o relatório anterior deve corresponder
+    // ao mesmo mês do ano anterior.
+    let fonteAAValidada = fonteAA;
+
+    if (fonteAA && tipoValidado === "ENTRADA") {
+      const periodoAA = extrairPeriodo(fonteAA.periodoOriginal);
+
+      const periodoCompativel =
+        periodoAA !== null &&
+        periodoAA.inicio.getUTCFullYear() ===
+          inicio.getUTCFullYear() - 1 &&
+        periodoAA.fim.getUTCFullYear() ===
+          fim.getUTCFullYear() - 1 &&
+        periodoAA.inicio.getUTCMonth() ===
+          inicio.getUTCMonth() &&
+        periodoAA.fim.getUTCMonth() ===
+          fim.getUTCMonth() &&
+        periodoAA.inicio.getUTCDate() ===
+          inicio.getUTCDate() &&
+        periodoAA.fim.getUTCDate() ===
+          fim.getUTCDate();
+
+      if (!periodoCompativel) {
+        fonteAAValidada = null;
+      }
+    }
 
     if (
       periodoValidado === "MENSAL" &&
@@ -529,6 +570,15 @@ export async function GET(req: NextRequest) {
         permitirSupervisor(item.codigoRepresentante)
       );
 
+    // AA passa pelas mesmas regras de acesso, De/Para,
+    // regional e representante aplicadas ao realizado.
+    const realizadosAA = (fonteAAValidada?.registros ?? [])
+      .map((item) => normalizarRealizado(item, mapa))
+      .filter((item) =>
+        permitirRepresentante(item.codigoRepresentante) &&
+        permitirSupervisor(item.codigoRepresentante)
+      );
+
     // Preserva todos os representantes com meta,
     // inclusive aqueles sem realizado.
     const codigosComMeta = new Set(
@@ -575,6 +625,16 @@ export async function GET(req: NextRequest) {
 
     const totalRealizadoFonte = somar(realizados);
 
+    // Mesmo universo conciliado com metas usado no ano atual.
+    // Representantes sem realizado atual podem possuir AA.
+    const totalAA = fonteAAValidada
+      ? somar(
+          realizadosAA.filter((item) =>
+            codigosComMeta.has(item.codigoRepresentante)
+          )
+        )
+      : null;
+
     const avisos: string[] = [
       "Códigos normalizados pelo cadastro oficial e De/Para do Supabase.",
       "Metas sem realizado permanecem no cálculo com realizado zero.",
@@ -583,6 +643,22 @@ export async function GET(req: NextRequest) {
         ? "Meta semanal proporcional aos dias úteis de segunda a sexta, sem feriados."
         : "Meta mensal conforme arquivo oficial.",
     ];
+
+    if (!fonteAAValidada) {
+      avisos.push(
+        fonteAA
+          ? "Comparativo AA indisponível: período histórico incompatível."
+          : "Comparativo AA não disponível para esta periodicidade."
+      );
+    } else {
+      avisos.push(
+        "Comparativo AA obtido de " +
+        fonteAAValidada.arquivo +
+        " / " +
+        fonteAAValidada.aba +
+        "."
+      );
+    }
 
     if (supervisoresPermitidos) {
       avisos.push(
@@ -635,14 +711,20 @@ export async function GET(req: NextRequest) {
       },
 
       indicadores: {
-        pares: calcularIndicador(
-          totalMeta.pares,
-          totalRealizado.pares
-        ),
-        valores: calcularIndicador(
-          totalMeta.valores,
-          totalRealizado.valores
-        ),
+        pares: {
+          ...calcularIndicador(
+            totalMeta.pares,
+            totalRealizado.pares
+          ),
+          realizadoAA: totalAA?.pares ?? null,
+        },
+        valores: {
+          ...calcularIndicador(
+            totalMeta.valores,
+            totalRealizado.valores
+          ),
+          realizadoAA: totalAA?.valores ?? null,
+        },
       },
 
       comparabilidade: {

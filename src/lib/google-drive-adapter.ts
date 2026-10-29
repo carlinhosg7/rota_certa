@@ -217,7 +217,13 @@ function salvarCache(
 async function baixarDriveComCache(
   nome: string
 ): Promise<Buffer> {
-  const arquivo = arquivoDrive(nome);
+  let arquivo = arquivoDrive(nome);
+
+  if (!arquivo) {
+    console.log(`[DRIVE] Arquivo ausente no catalogo. Atualizando: ${nome}`);
+    await atualizarCatalogoDrive(true);
+    arquivo = arquivoDrive(nome);
+  }
 
   if (!arquivo) {
     throw new Error(`Arquivo nao encontrado no Drive: ${nome}`);

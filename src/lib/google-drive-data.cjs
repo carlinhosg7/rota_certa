@@ -23,6 +23,7 @@ const NOMES_OFICIAIS = [
   "NOME_REFERENCIAS.xlsx",
   "municipios_com_lat_lon.csv",
   "META ENTRADA.xlsx",
+  "META ENTRADA C KIDEX.xlsx",
   "META FATURAMENTO.xlsx",
   "MATINAL COMERIAL.xlsx",
   "INDICADORES COMERCIAIS POR  FATURAMENTO.xlsx"];

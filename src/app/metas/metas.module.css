@@ -431,3 +431,36 @@
     animation: none;
   }
 }
+
+/* FATURAMENTO: caixas-d'agua verdes.
+   ENTRADA: permanece com o azul original. */
+
+.waterGreen .waterTankInner {
+  background: linear-gradient(180deg, #f0fdf4, #dcfce7);
+}
+
+.waterGreen .waterLiquid {
+  background: linear-gradient(
+    180deg,
+    #4ade80,
+    #16a34a 75%,
+    #15803d
+  );
+}
+
+.waterGreen .waterWave {
+  background: rgba(74, 222, 128, 0.85);
+}
+
+.waterGreen .waterWaveSecondary {
+  background: rgba(187, 247, 208, 0.7);
+}
+
+/* KIDEX: caixas-d'agua cinza, sem afetar os indicadores atuais. */
+.kidexSwitch { display:flex; flex-direction:column; gap:8px; padding:16px 20px; background:#f8fafc; border:1px solid #d1d5db; border-radius:14px; }
+.kidexSwitch label { font-size:12px; font-weight:700; color:#475569; }
+.kidexSwitch select { padding:11px 14px; border:1px solid #cbd5e1; border-radius:10px; background:white; color:#1e293b; font-size:14px; max-width:620px; }
+.waterGray .waterTankInner { background:linear-gradient(180deg,#f8fafc,#e5e7eb); }
+.waterGray .waterLiquid { background:linear-gradient(180deg,#9ca3af,#6b7280 75%,#4b5563); }
+.waterGray .waterWave { background:rgba(156,163,175,.85); }
+.waterGray .waterWaveSecondary { background:rgba(209,213,219,.75); }

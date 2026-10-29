@@ -295,3 +295,117 @@ export async function carregarRealizado(
     registros,
   };
 }
+
+
+/**
+ * Realizado do ano anterior.
+ *
+ * FATURAMENTO:
+ * MES e SEMANA possuem Vlr Venda AA e Qtd Venda AA.
+ *
+ * ENTRADA:
+ * O comparativo mensal está em ENTRADA MES ANTERIOR.
+ * Não existe fonte semanal AA confirmada.
+ */
+export async function carregarRealizadoAA(
+  tipo: TipoMeta,
+  periodicidade: PeriodicidadeMeta
+): Promise<FonteRealizado | null> {
+  if (tipo === "ENTRADA" && periodicidade === "SEMANAL") {
+    return null;
+  }
+
+  await atualizarCatalogoDrive();
+
+  const faturamento = tipo === "FATURAMENTO";
+
+  const arquivo = faturamento
+    ? ARQUIVOS.FATURAMENTO_REALIZADO
+    : ARQUIVOS.ENTRADA_REALIZADO;
+
+  const aba = faturamento
+    ? periodicidade === "MENSAL"
+      ? "MES"
+      : "SEMANA"
+    : "ENTRADA MES ANTERIOR";
+
+  const workbook = await abrirExcel(arquivo);
+  const linhas = linhasAba(workbook, aba);
+
+  const cabecalho = encontrarCabecalho(
+    linhas,
+    faturamento
+      ? ["Codigo Representante", "Vlr Venda AA", "Qtd Venda AA"]
+      : ["Codigo Representante", "Vlr Venda", "Qtd Venda"]
+  );
+
+  const cab = linhas[cabecalho].map((v) => texto(v).toUpperCase());
+
+  const coluna = (nome: string): number => {
+    const indice = cab.indexOf(nome.toUpperCase());
+
+    if (indice < 0) {
+      throw new Error(`Coluna ${nome} ausente em ${arquivo}/${aba}`);
+    }
+
+    return indice;
+  };
+
+  const iCodigo = coluna("Codigo Representante");
+  const iNome = coluna("Representante");
+
+  const iValor = coluna(
+    faturamento ? "Vlr Venda AA" : "Vlr Venda"
+  );
+
+  const iQtd = coluna(
+    faturamento ? "Qtd Venda AA" : "Qtd Venda"
+  );
+
+  const iSupervisor = cab.indexOf(
+    faturamento && periodicidade === "MENSAL"
+      ? "CODIGO SUPERVISOR"
+      : "SUPERVISOR"
+  );
+
+  const registros: RegistroRealizado[] = [];
+
+  for (const linha of linhas.slice(cabecalho + 1)) {
+    const rep = codigo(linha[iCodigo]);
+
+    if (!/^\d+$/.test(rep) || linhaTotal(linha)) {
+      continue;
+    }
+
+    registros.push({
+      codigoRepresentante: rep,
+      representante: texto(linha[iNome]),
+      supervisor:
+        iSupervisor >= 0 ? texto(linha[iSupervisor]) : "",
+      quantidade: numero(linha[iQtd]),
+      valor: numero(linha[iValor]),
+    });
+  }
+
+  const metadados = linhas
+    .slice(0, cabecalho)
+    .flat()
+    .map(texto)
+    .filter(Boolean)
+    .join(" | ");
+
+  const periodoOriginal =
+    metadados.match(
+      /(?:Data Entrega|Data Cadastro)\s*:\s*[^;|]+/i
+    )?.[0] ?? "Período não identificado";
+
+  return {
+    tipo,
+    periodicidade,
+    arquivo,
+    aba,
+    periodoOriginal,
+    filtrosOriginais: metadados,
+    registros,
+  };
+}

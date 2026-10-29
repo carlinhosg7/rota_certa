@@ -12,6 +12,7 @@ const fmt = (n:number) => n.toLocaleString('pt-BR',{maximumFractionDigits:0});
 const pct = (n:number|null) => n===null ? '—' : `${n.toLocaleString('pt-BR',{minimumFractionDigits:2,maximumFractionDigits:2})}%`;
 export default function ShareClient() {
   const [dados,setDados] = useState<Dados|null>(null);
+  const [mostrarPlanejador,setMostrarPlanejador] = useState(false);
   const [erro,setErro]=useState('');
   const [contagens,setContagens]=useState<Record<string,number>>({});
   const [erroClientes,setErroClientes]=useState('');
@@ -112,7 +113,12 @@ export default function ShareClient() {
         <input aria-label="Ajustar share" style={{flex:1,minWidth:180}} type="range" min="0" max="20" step="0.1" value={Math.min(simulado,20)} onChange={e=>setSimulado(Number(e.target.value))}/>
         <b>Previsão: {fmt(total.projecao)} pares</b><span>Diferença vs. meta 5%: {fmt(total.projecao-total.meta)} pares</span></div>
       </section>
-      <PlanejadorShare cidades={filtro} simulado={simulado}/>
+      <section style={{marginTop:16,marginBottom:16}}>
+        <button type="button" onClick={()=>setMostrarPlanejador(v=>!v)} style={{padding:'12px 16px',background:'#1d4ed8',color:'#fff',border:0,borderRadius:9,fontWeight:700,cursor:'pointer'}}>
+          {mostrarPlanejador?'Ocultar planejador':'Abrir planejador de crescimento e prospecção'}
+        </button>
+        {mostrarPlanejador&&<PlanejadorShare cidades={filtro} simulado={simulado}/>}
+      </section>
       <section style={{...cardStyle,marginTop:16}}><h2 style={{fontSize:20,fontWeight:700}}>Evolução do Share por ano</h2>
         {!total.evolucao.length?<p>Histórico indisponível até a integração dos Parquets.</p>:<div style={{overflowX:'auto'}}><table style={{width:'100%',borderCollapse:'collapse'}}><thead><tr><th>Ano</th><th>Pares vendidos</th><th>Share realizado</th><th>Meta</th></tr></thead><tbody>{total.evolucao.map(r=><tr key={r.ano}><td>{r.ano}{Number(r.ano)===anoAtual?' (parcial)':r.ano==='2022'?' (incompleto)':''}</td><td>{fmt(r.pares)}</td><td>{pct(r.share)}</td><td>5,00%</td></tr>)}</tbody></table></div>}
       </section>

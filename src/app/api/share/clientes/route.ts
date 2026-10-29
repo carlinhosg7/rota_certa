@@ -44,6 +44,18 @@ export async function GET(req: NextRequest) {
   }
 
   try {
+    if (req.nextUrl.searchParams.get("modo") === "contagem") {
+      const indiceBuffer = await lerArquivoComercial("share-acesso-indice.json");
+      const indice = JSON.parse(indiceBuffer.toString("utf8")) as {cidades: Record<string,{total:number;representantes:Record<string,number>}>};
+      const contagens:Record<string,number> = {};
+      for (const [ibge, entrada] of Object.entries(indice.cidades)) {
+        const quantidade = ehAdminShare(usuario) ? entrada.total :
+          Object.entries(entrada.representantes).reduce((n,[rep,q]) => n + (pertenceRepresentanteShare(usuario,rep) ? q : 0),0);
+        if (quantidade > 0 || ehAdminShare(usuario)) contagens[ibge]=quantidade;
+      }
+      return NextResponse.json({contagens});
+    }
+
     const buffer = await lerArquivoComercial("share-clientes.json");
     const dados = JSON.parse(buffer.toString("utf8")) as Base;
     const basePermitida: Base = ehAdminShare(usuario) ? dados : Object.fromEntries(

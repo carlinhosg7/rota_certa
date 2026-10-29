@@ -31,6 +31,7 @@ const NOMES_OFICIAIS = [
   "share-vendas-anuais.json",
   "share-clientes.json",
   "share-potencial-clientes.json",
+  "share-acesso-indice.json",
 ];
 
 function configuracao() {

@@ -61,9 +61,9 @@ export async function GET() {
     }
 
     const municipiosPermitidos = ehAdminShare(usuario) ? municipios : await (async () => {
-      const cadastro = await lerJSON<Record<string, { codigo_representante: string }[]>>("share-clientes.json");
-      const codigos = new Set(Object.entries(cadastro)
-        .filter(([, clientes]) => clientes.some(c => pertenceRepresentanteShare(usuario, c.codigo_representante)))
+      const indice = await lerJSON<{cidades:Record<string,{representantes:Record<string,number>}>}>("share-acesso-indice.json");
+      const codigos = new Set(Object.entries(indice.cidades)
+        .filter(([, dados]) => Object.keys(dados.representantes).some(rep => pertenceRepresentanteShare(usuario, rep)))
         .map(([ibge]) => ibge));
       return municipios.filter(c => codigos.has(String(c.codigo_ibge)));
     })();

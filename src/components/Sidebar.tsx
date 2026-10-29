@@ -3,6 +3,7 @@
 import Image from "next/image";
 import Link from "next/link";
 import { usePathname, useRouter } from "next/navigation";
+import { useEffect, useState } from "react";
 
 type Props = {
   nome: string;
@@ -13,6 +14,35 @@ type Props = {
 export default function Sidebar({ nome, perfil, usuario }: Props) {
   const pathname = usePathname();
   const router = useRouter();
+
+  const [recolhido, setRecolhido] = useState(false);
+
+  useEffect(() => {
+    try {
+      setRecolhido(
+        localStorage.getItem("kidy-sidebar-collapsed") === "1"
+      );
+    } catch {
+      // Navegador sem armazenamento disponivel.
+    }
+  }, []);
+
+  function alternarSidebar() {
+    setRecolhido(atual => {
+      const proximo = !atual;
+
+      try {
+        localStorage.setItem(
+          "kidy-sidebar-collapsed",
+          proximo ? "1" : "0"
+        );
+      } catch {
+        // Mantem o controle funcionando sem armazenamento.
+      }
+
+      return proximo;
+    });
+  }
 
   async function sair() {
     await fetch("/api/auth/logout", { method: "POST" });
@@ -41,8 +71,35 @@ export default function Sidebar({ nome, perfil, usuario }: Props) {
     lineHeight: 1.35
   });
 
+  if (recolhido) {
+    return (
+      <aside className="sidebar is-collapsed">
+        <button
+          type="button"
+          className="sidebar-toggle"
+          onClick={alternarSidebar}
+          title="Exibir menu lateral"
+          aria-label="Exibir menu lateral"
+          aria-expanded={false}
+        >
+          ☰
+        </button>
+      </aside>
+    );
+  }
+
   return (
     <aside className="sidebar">
+      <button
+        type="button"
+        className="sidebar-toggle"
+        onClick={alternarSidebar}
+        title="Ocultar menu lateral"
+        aria-label="Ocultar menu lateral"
+        aria-expanded={true}
+      >
+        ☰ Ocultar menu
+      </button>
       <div className="brand">
         <Image
           src="/logo-kidy.png"
@@ -75,6 +132,19 @@ export default function Sidebar({ nome, perfil, usuario }: Props) {
             </Link>
           );
         })}
+
+                <Link
+          href="/gestao-reativacao"
+          style={{
+            ...estiloLink(pathname === "/gestao-reativacao"),
+            marginLeft: 22,
+            paddingLeft: 14,
+            fontSize: 12,
+            borderLeft: "2px solid #f97316",
+          }}
+        >
+          Gestão de Reativação
+        </Link>
 
         <Link
           href="/reativacao"

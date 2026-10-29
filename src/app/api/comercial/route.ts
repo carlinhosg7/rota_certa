@@ -1,9 +1,11 @@
+import { carregarMapaRepresentantes } from "@/lib/representantes-oficiais";
 import { NextRequest, NextResponse } from "next/server";
 import { cookies } from "next/headers";
 import { validarToken } from "@/lib/auth";
 
 import {
   getData,
+  carregarCarteiraOficial360,
   MAPA_SUPERVISORES,
   resumirClientes,
   sugerirRota,
@@ -40,6 +42,82 @@ export async function GET(req: NextRequest) {
     // BASES
     // =========================================================
 
+    // =========================================================
+    // CARREGAMENTO INICIAL LEVE
+    // =========================================================
+
+    const supInicial = req.nextUrl.searchParams.get("supervisor") || "";
+    const repInicial = req.nextUrl.searchParams.get("representante") || "";
+
+    if (!repInicial) {
+      const [{ carteira }, mapaRepresentantes] = await Promise.all([
+        carregarCarteiraOficial360(),
+        carregarMapaRepresentantes(),
+      ]);
+
+      const perfilInicial = String(u.perfil || "").toUpperCase();
+
+      const repLoginInicial = String(
+        u.codigo_representante || u.usuario || ""
+      ).replace(/\.0+$/, "");
+
+      const carteiraPermitida =
+        perfilInicial === "REPRESENTANTE"
+          ? carteira.filter((c) => c.rep === repLoginInicial)
+          : carteira;
+
+      const cadastroPermitido = [
+        ...mapaRepresentantes.cadastro.values()
+      ].filter((r) => {
+        if (!r.ativo) return false;
+
+        if (perfilInicial === "REPRESENTANTE") {
+          return r.codigo_rep === repLoginInicial;
+        }
+
+        return true;
+      });
+
+      const supervisores = [
+        ...new Set(
+          cadastroPermitido
+            .map((r) => r.codigo_supervisor)
+            .filter((s): s is string => Boolean(s))
+        ),
+      ]
+        .sort()
+        .map((codigo) => ({
+          codigo,
+          nome: MAPA_SUPERVISORES[codigo] || codigo,
+          label: MAPA_SUPERVISORES[codigo]
+            ? `${codigo} - ${MAPA_SUPERVISORES[codigo]}`
+            : codigo,
+        }));
+
+      const representantes = cadastroPermitido
+        .filter((r) => r.codigo_supervisor === supInicial)
+        .map((r) => r.codigo_rep)
+        .sort((a, b) =>
+          a.localeCompare(b, "pt-BR", { numeric: true })
+        );
+      return NextResponse.json({
+        supervisores,
+        representantes,
+        cidades: [],
+        kpis: {
+          clientes: 0,
+          vermelhos: 0,
+          amarelos: 0,
+          verdes: 0,
+        },
+        clientes: [],
+        rota: [],
+        raio: 120,
+        cidadeBase: null,
+        cidadeClientes: null,
+        perfil: perfilInicial,
+      });
+    }
     const { carteira, vendas, municipios, nomesReferencias } = await getData();
 
     const perfil = String(u.perfil || "").toUpperCase();
@@ -86,19 +164,31 @@ export async function GET(req: NextRequest) {
     // SUPERVISORES
     // =========================================================
 
+    // =========================================================
+    // FILTROS OFICIAIS EM TODAS AS REQUISICOES
+    // =========================================================
+
+    const mapaFiltros = await carregarMapaRepresentantes();
+
+    const cadastroOficial = [
+      ...mapaFiltros.cadastro.values()
+    ].filter((r) => {
+      if (!r.ativo) return false;
+
+      if (perfil === "REPRESENTANTE") {
+        return r.codigo_rep === repLogin;
+      }
+
+      return true;
+    });
+
     const supervisors = [
-      ...new Set(c.map((x) => x.sup).filter(Boolean)),
-    ]
-      .filter(
-        (x) =>
-          ![
-            "9905",
-            "ADRIANO PIRES",
-            "NN",
-            "SP",
-            "TOTAL GERAL",
-          ].includes(String(x))
+      ...new Set(
+        cadastroOficial
+          .map((r) => r.codigo_supervisor)
+          .filter((s): s is string => Boolean(s))
       )
+    ]
       .sort()
       .map((codigo) => ({
         codigo,
@@ -108,16 +198,14 @@ export async function GET(req: NextRequest) {
           : codigo,
       }));
 
-    // =========================================================
-    // REPRESENTANTES
-    // =========================================================
+    const reps = cadastroOficial
+      .filter((r) => r.codigo_supervisor === sup)
+      .map((r) => r.codigo_rep)
+      .sort((a, b) =>
+        a.localeCompare(b, "pt-BR", { numeric: true })
+      );
 
     const cSup = sup ? c.filter((x) => x.sup === sup) : [];
-
-    const reps = [...new Set(cSup.map((x) => x.rep))].sort((a, b) =>
-      a.localeCompare(b, "pt-BR", { numeric: true })
-    );
-
     // =========================================================
     // CARTEIRA DO REPRESENTANTE
     // =========================================================

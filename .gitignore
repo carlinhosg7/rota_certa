@@ -60,3 +60,30 @@ _backup_cliente_360/
 *.bak_*
 node_modules/
 .next/
+
+.importacao-360/
+
+# Arquivos locais de manutencao
+.env.local
+.env.production
+.env*.local
+cadastrar-representante-74.cjs
+redefinir-senha-74.cjs
+backup-*/
+backup-*/**
+
+# Arquivos temporarios e diagnosticos
+*.backup
+*.backup-*
+*.bak
+*.bak-*
+backup-*/
+diagnostico-*
+teste-*.ts
+verificar-indice-360.ts
+gerar-indice-360.ts
+gerar-supervisores-360.ts
+importar-perfis-360.ts
+otimizar-visao360-etapa1.ps1
+cadastrar-representante-74.cjs
+redefinir-senha-74.cjs

@@ -15,6 +15,7 @@ import { cookies } from "next/headers";
 
 import { validarToken } from "@/lib/auth";
 import ResultadoAtendimento from "@/components/ResultadoAtendimento";
+import GestaoReativacao from "@/components/GestaoReativacao";
 import ClassificacaoCliente from "@/components/ClassificacaoCliente";
 import { obterClassificacoes } from "@/lib/classificacoes-db";
 import { carregarCarteira2027 } from "@/lib/carteira-2027-data";
@@ -1799,7 +1800,8 @@ const janelaComercial = await calcularJanelaCompraFaturamento(
         </section>
 
         {/* RESULTADO DO ATENDIMENTO */}
-        <ResultadoAtendimento
+        <GestaoReativacao codigoCliente={cliente.codigo} />
+          <ResultadoAtendimento
           codigoCliente={cliente.codigo}
           nomeCliente={cliente.razao}
           codigoRepresentante={cliente.rep}

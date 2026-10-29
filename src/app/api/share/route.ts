@@ -2,7 +2,7 @@ import { podeAcessarShare, ehAdminShare, pertenceRepresentanteShare } from "@/li
 import { cookies } from "next/headers";
 import { validarToken } from "@/lib/auth";
 import { NextResponse } from "next/server";
-import { lerArquivoComercial } from "@/lib/google-drive-adapter";
+import { lerJSONShare } from "@/lib/share-snapshots";
 import {
   calcularShareMedio,
   gerentePorSupervisor,
@@ -22,10 +22,7 @@ type Municipio = {
   [campo: string]: unknown;
 };
 
-async function lerJSON<T>(nome: string): Promise<T> {
-  const buffer = await lerArquivoComercial(nome);
-  return JSON.parse(buffer.toString("utf8")) as T;
-}
+
 
 export async function GET() {
   const token = (await cookies()).get("kidy_session")?.value;
@@ -52,8 +49,8 @@ export async function GET() {
 
   try {
     const [municipios, vendas] = await Promise.all([
-      lerJSON<Municipio[]>("share-municipios.json"),
-      lerJSON<Historico>("share-vendas-anuais.json")
+      lerJSONShare<Municipio[]>("share-municipios.json"),
+      lerJSONShare<Historico>("share-vendas-anuais.json")
     ]);
 
     if (!Array.isArray(municipios) || municipios.length === 0) {
@@ -61,7 +58,7 @@ export async function GET() {
     }
 
     const municipiosPermitidos = ehAdminShare(usuario) ? municipios : await (async () => {
-      const indice = await lerJSON<{cidades:Record<string,{representantes:Record<string,number>}>}>("share-acesso-indice.json");
+      const indice = await lerJSONShare<{cidades:Record<string,{representantes:Record<string,number>}>}>("share-acesso-indice.json");
       const codigos = new Set(Object.entries(indice.cidades)
         .filter(([, dados]) => Object.keys(dados.representantes).some(rep => pertenceRepresentanteShare(usuario, rep)))
         .map(([ibge]) => ibge));

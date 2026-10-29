@@ -2,7 +2,7 @@ import { podeAcessarShare, ehAdminShare, pertenceRepresentanteShare } from "@/li
 import { cookies } from "next/headers";
 import { validarToken } from "@/lib/auth";
 import { NextRequest, NextResponse } from "next/server";
-import { lerArquivoComercial } from "@/lib/google-drive-adapter";
+import { lerJSONShare } from "@/lib/share-snapshots";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -45,8 +45,7 @@ export async function GET(req: NextRequest) {
 
   try {
     if (req.nextUrl.searchParams.get("modo") === "contagem") {
-      const indiceBuffer = await lerArquivoComercial("share-acesso-indice.json");
-      const indice = JSON.parse(indiceBuffer.toString("utf8")) as {cidades: Record<string,{total:number;representantes:Record<string,number>}>};
+      const indice = await lerJSONShare<{cidades: Record<string,{total:number;representantes:Record<string,number>}>}>("share-acesso-indice.json");
       const contagens:Record<string,number> = {};
       for (const [ibge, entrada] of Object.entries(indice.cidades)) {
         const quantidade = ehAdminShare(usuario) ? entrada.total :
@@ -56,8 +55,7 @@ export async function GET(req: NextRequest) {
       return NextResponse.json({contagens});
     }
 
-    const buffer = await lerArquivoComercial("share-clientes.json");
-    const dados = JSON.parse(buffer.toString("utf8")) as Base;
+    const dados = await lerJSONShare<Base>("share-clientes.json");
     const basePermitida: Base = ehAdminShare(usuario) ? dados : Object.fromEntries(
       Object.entries(dados).map(([ibge, clientes]) => [ibge, clientes.filter(c => pertenceRepresentanteShare(usuario, c.codigo_representante))])
         .filter(([, clientes]) => clientes.length > 0)

@@ -2,7 +2,7 @@ import { podeAcessarShare, ehAdminShare, pertenceRepresentanteShare } from "@/li
 import { cookies } from "next/headers";
 import { validarToken } from "@/lib/auth";
 import { NextRequest, NextResponse } from "next/server";
-import { lerArquivoComercial } from "@/lib/google-drive-adapter";
+import { lerJSONShare } from "@/lib/share-snapshots";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -28,10 +28,7 @@ type Cliente = {
   supervisor: string;
 };
 
-async function lerJSON<T>(nome: string): Promise<T> {
-  const buffer = await lerArquivoComercial(nome);
-  return JSON.parse(buffer.toString("utf8")) as T;
-}
+
 
 export async function GET(req: NextRequest) {
   const token = (await cookies()).get("kidy_session")?.value;
@@ -57,12 +54,12 @@ export async function GET(req: NextRequest) {
   }
 
   try {
-    const dados = await lerJSON<Payload>(
+    const dados = await lerJSONShare<Payload>(
       "share-potencial-clientes.json"
     );
 
     const cadastroRestrito = ehAdminShare(usuario) ? null :
-      await lerJSON<Record<string, Cliente[]>>("share-clientes.json");
+      await lerJSONShare<Record<string, Cliente[]>>("share-clientes.json");
 
     const ibge = req.nextUrl.searchParams.get("ibge");
 
@@ -73,7 +70,7 @@ export async function GET(req: NextRequest) {
         );
       }
 
-      const cadastro = await lerJSON<Record<string, Cliente[]>>(
+      const cadastro = await lerJSONShare<Record<string, Cliente[]>>(
         "share-clientes.json"
       );
 

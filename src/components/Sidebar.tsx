@@ -56,6 +56,7 @@ export default function Sidebar({ nome, perfil, usuario }: Props) {
     { titulo: "Venda Mais+", href: "/dashboard#venda-mais", rota: "" },
     { titulo: "Análise Preditiva", href: "/dashboard#clientes", rota: "" },
     { titulo: "Metas", href: "/metas", rota: "/metas" },
+    { titulo: "Share", href: "/share", rota: "/share" },
     { titulo: "Gestão de Carteira 2027", href: "/carteira", rota: "/carteira" }
   ];
 

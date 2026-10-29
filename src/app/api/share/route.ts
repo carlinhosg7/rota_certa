@@ -1,28 +1,37 @@
 import { cookies } from "next/headers";
 import { validarToken } from "@/lib/auth";
-import { NextResponse } from 'next/server';
-import municipios from '../../../../data/share-municipios.json';
-import { calcularShareMedio, gerentePorSupervisor, ultimoAnoCompleto, shareReal } from '../../../lib/share';
-import { readFile } from 'node:fs/promises';
-import path from 'node:path';
-export const runtime = 'nodejs';
-export const dynamic = 'force-dynamic';
+import { NextResponse } from "next/server";
+import { lerArquivoComercial } from "@/lib/google-drive-adapter";
+import {
+  calcularShareMedio,
+  gerentePorSupervisor,
+  ultimoAnoCompleto,
+  shareReal
+} from "@/lib/share";
+
+export const runtime = "nodejs";
+export const dynamic = "force-dynamic";
 
 type Historico = Record<string, Record<string, number>>;
-async function carregarVendas(): Promise<Historico | null> {
-  try {
-    const arquivo = path.join(process.cwd(), 'data', 'share-vendas-anuais.json');
-    return JSON.parse(await readFile(arquivo, 'utf8')) as Historico;
-  } catch { return null; }
-}
-export async function GET() {
 
+type Municipio = {
+  codigo_ibge: string;
+  supervisor: string;
+  potencial_pares: number;
+  [campo: string]: unknown;
+};
+
+async function lerJSON<T>(nome: string): Promise<T> {
+  const buffer = await lerArquivoComercial(nome);
+  return JSON.parse(buffer.toString("utf8")) as T;
+}
+
+export async function GET() {
   const token = (await cookies()).get("kidy_session")?.value;
 
   if (!token) {
     return NextResponse.json(
-      { erro: "Nao autenticado" },
-      { status: 401 }
+      { erro: "Nao autenticado" }, { status: 401 }
     );
   }
 
@@ -30,31 +39,58 @@ export async function GET() {
 
   if (!usuario) {
     return NextResponse.json(
-      { erro: "Sessao invalida" },
-      { status: 401 }
+      { erro: "Sessao invalida" }, { status: 401 }
     );
   }
 
-  const perfil = String(usuario.perfil || "").toUpperCase();
-
-  if (perfil !== "ADMIN") {
+  if (String(usuario.perfil ?? "").toUpperCase() !== "ADMIN") {
     return NextResponse.json(
-      { erro: "Sem permissao" },
-      { status: 403 }
+      { erro: "Sem permissao" }, { status: 403 }
     );
   }
 
-  // IMPORTANTE: adaptar esta rota Ã  autenticaÃ§Ã£o jÃ¡ existente no KIDY antes de publicar.
-  const vendas = await carregarVendas();
-  const cidades = municipios.map(c => {
-    const historico = vendas ? (vendas[String(c.codigo_ibge)] ?? {}) : null;
-    const temUltimoAno = historico !== null && Object.prototype.hasOwnProperty.call(historico, String(ultimoAnoCompleto));
-    return {
-      ...c, gerente: gerentePorSupervisor(c.supervisor), vendas_ano: historico,
-      share_medio_historico: historico ? calcularShareMedio(historico, c.potencial_pares, ultimoAnoCompleto) : null,
-      share_ultimo_ano: historico ? shareReal(Number(historico[String(ultimoAnoCompleto)] ?? 0), c.potencial_pares) : null,
-    };
-  });
-  return NextResponse.json({ cidades, ultimoAnoCompleto, vendasDisponiveis: vendas !== null,
-    observacao: vendas ? 'Vendas dos Parquets importadas.' : 'Vendas nÃ£o carregadas; execute importar-vendas-parquet.py.' });
+  try {
+    const [municipios, vendas] = await Promise.all([
+      lerJSON<Municipio[]>("share-municipios.json"),
+      lerJSON<Historico>("share-vendas-anuais.json")
+    ]);
+
+    if (!Array.isArray(municipios) || municipios.length === 0) {
+      throw new Error("Base municipal vazia ou invalida");
+    }
+
+    const cidades = municipios.map(c => {
+      const historico = vendas[String(c.codigo_ibge)] ?? {};
+
+      return {
+        ...c,
+        gerente: gerentePorSupervisor(c.supervisor),
+        vendas_ano: historico,
+        share_medio_historico: calcularShareMedio(
+          historico,
+          c.potencial_pares,
+          ultimoAnoCompleto
+        ),
+        share_ultimo_ano: shareReal(
+          Number(historico[String(ultimoAnoCompleto)] ?? 0),
+          c.potencial_pares
+        )
+      };
+    });
+
+    return NextResponse.json({
+      cidades,
+      ultimoAnoCompleto,
+      vendasDisponiveis: true,
+      observacao: "Historico de entregas carregado do Google Drive."
+    });
+
+  } catch (erro) {
+    console.error("[SHARE] Falha ao carregar bases:", erro);
+
+    return NextResponse.json(
+      { erro: "Dados do Share indisponiveis no Google Drive" },
+      { status: 503 }
+    );
+  }
 }

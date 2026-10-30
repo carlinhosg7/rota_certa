@@ -1,4 +1,5 @@
 import { listarGerentesRegionais } from "@/lib/carteira-gerentes";
+import { acessoGlobal, regionaisPermitidas, representantesPermitidos } from "@/lib/escopo-acesso";
 import { carregarCarteira2027 } from "../../lib/carteira-2027-data";
 import "server-only";
 
@@ -164,33 +165,54 @@ export default async function CarteiraPage({
   }
 
   // Controle de acesso aplicado ANTES dos filtros da interface.
-  if (perfil === "REPRESENTANTE") {
+  if (perfil === "REPRESENTANTE" || perfil === "REP") {
     clientes = clientes.filter(c =>
       c.representantes?.some(r => codigo(r.codigo) === repLogin)
     );
-  } else if (perfil === "SUPERVISOR") {
-    clientes = clientes.filter(c =>
-      c.supervisores?.some(s => codigo(s.codigo) === supLogin)
-    );
-  } else if (!["ADMIN", "ADMINISTRADOR", "GERENTE"].includes(perfil)) {
+  } else if (perfil === "SUPERVISOR" || perfil === "GERENTE") {
+    if (!acessoGlobal(sessao)) {
+      const regionais = await regionaisPermitidas(sessao);
+
+      clientes = clientes.filter(c =>
+        c.supervisores?.some(s =>
+          regionais?.has(codigo(s.codigo))
+        )
+      );
+    }
+  } else if (!acessoGlobal(sessao)) {
     clientes = [];
-    erroBase = "Perfil sem permissão configurada para esta carteira.";
+    erroBase = "Perfil sem permissao para consultar a carteira.";
   }
 
   if (gerenteFiltro) {
     clientes = clientes.filter(c => c.supervisores?.some(s => regionaisGerente.has(codigo(s.codigo))));
   }
 
+  // Filtrar tambem os vinculos exibidos nos menus.
+  const regionaisEscopo =
+    perfil === "SUPERVISOR" ||
+    (perfil === "GERENTE" && !acessoGlobal(sessao))
+      ? await regionaisPermitidas(sessao)
+      : null;
+
+  const repsEscopo = await representantesPermitidos(sessao);
+
   const supervisores = new Map<string, string>();
   const representantes = new Map<string, string>();
 
   for (const c of clientes) {
     for (const s of c.supervisores || []) {
-      if (s.codigo) supervisores.set(codigo(s.codigo), s.nome);
+      const id = codigo(s.codigo);
+      if (id && (regionaisEscopo === null || regionaisEscopo.has(id))) {
+        supervisores.set(id, s.nome);
+      }
     }
 
     for (const r of c.representantes || []) {
-      if (r.codigo) representantes.set(codigo(r.codigo), r.nome);
+      const id = codigo(r.codigo);
+      if (id && (repsEscopo === null || repsEscopo.includes(id))) {
+        representantes.set(id, r.nome);
+      }
     }
   }
 
@@ -199,19 +221,25 @@ export default async function CarteiraPage({
   const receitaFiltro = String(parametros.receita ?? "").toUpperCase();
 
   if (supervisorFiltro) {
-    clientes = clientes.filter(c =>
-      c.supervisores?.some(s =>
-        codigo(s.codigo) === supervisorFiltro
-      )
-    );
+    clientes = regionaisEscopo !== null &&
+      !regionaisEscopo.has(supervisorFiltro)
+      ? []
+      : clientes.filter(c =>
+          c.supervisores?.some(s =>
+            codigo(s.codigo) === supervisorFiltro
+          )
+        );
   }
 
   if (representanteFiltro) {
-    clientes = clientes.filter(c =>
-      c.representantes?.some(r =>
-        codigo(r.codigo) === representanteFiltro
-      )
-    );
+    clientes = repsEscopo !== null &&
+      !repsEscopo.includes(representanteFiltro)
+      ? []
+      : clientes.filter(c =>
+          c.representantes?.some(r =>
+            codigo(r.codigo) === representanteFiltro
+          )
+        );
   }
 
   // PAINEL_RECEITA_2027: contagem por cliente e Grupo Cliente distinto.

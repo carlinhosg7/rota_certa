@@ -8,6 +8,7 @@ import Link from "next/link";
 import { cookies } from "next/headers";
 import { redirect } from "next/navigation";
 import { validarToken } from "@/lib/auth";
+import { acessoGlobal, regionaisPermitidas, representantesPermitidos } from "@/lib/escopo-acesso";
 import { getData, cleanCode } from "@/lib/comercial-data";
 import Sidebar from "@/components/Sidebar";
 
@@ -264,17 +265,34 @@ export default async function VisaoGrupos({ searchParams }: Props) {
   }
 
   // Permissões aplicadas ANTES de agrupar.
-  if (perfil === "REPRESENTANTE") {
+  // Restringe os dados antes dos calculos e agrupamentos.
+  const acessoNacional = acessoGlobal(usuarioAutenticado);
+
+  const regionaisAutorizadas = acessoNacional
+    ? null
+    : await regionaisPermitidas(usuarioAutenticado);
+
+  const representantesAutorizados =
+    await representantesPermitidos(usuarioAutenticado);
+
+  if (perfil === "REPRESENTANTE" || perfil === "REP") {
     clientes = clientes.filter(c =>
-      c.representanteAtual?.some(r => codigo(r.codigo) === repLogin)
+      c.representanteAtual?.some(r =>
+        codigo(r.codigo) === repLogin
+      )
     );
-  } else if (perfil === "SUPERVISOR") {
+  } else if (
+    !acessoNacional &&
+    (perfil === "GERENTE" || perfil === "SUPERVISOR")
+  ) {
     clientes = clientes.filter(c =>
-      c.supervisores?.some(s => codigo(s.codigo) === supLogin)
+      c.supervisores?.some(s =>
+        regionaisAutorizadas?.has(codigo(s.codigo))
+      )
     );
-  } else if (!["ADMIN", "ADMINISTRADOR", "GERENTE"].includes(perfil)) {
+  } else if (!acessoNacional) {
     clientes = [];
-    erro = "Perfil sem permissão para consultar grupos.";
+    erro = "Perfil sem permissao para consultar grupos.";
   }
 
   const mapa = new Map<string, Grupo>();
@@ -377,7 +395,7 @@ export default async function VisaoGrupos({ searchParams }: Props) {
     gerentesRegionais.filter(g => g.gerente.toUpperCase() === gerenteFiltro)
       .map(g => codigo(g.codigo_supervisor))
   );
-  const opcoesGerentes = [...new Set(gerentesRegionais.map(g => g.gerente))]
+  const opcoesGerentes = [...new Set(gerentesRegionais.filter(g => acessoNacional || (perfil === "REPRESENTANTE" || perfil === "REP") || regionaisAutorizadas?.has(codigo(g.codigo_supervisor))).map(g => g.gerente))]
     .filter(Boolean).sort((a,b) => a.localeCompare(b, 'pt-BR'));
   const supervisorFiltro = codigo(params.supervisor);
   const representanteFiltro = codigo(params.representante);
@@ -392,11 +410,11 @@ export default async function VisaoGrupos({ searchParams }: Props) {
   for (const c of clientes) {
     for (const s of c.supervisores || []) {
       const id = codigo(s.codigo);
-      if (id) opcoesSupervisores.set(id, texto(s.nome) || id);
+      if (id && (acessoNacional || (perfil === "REPRESENTANTE" || perfil === "REP") || regionaisAutorizadas?.has(id))) opcoesSupervisores.set(id, texto(s.nome) || id);
     }
     for (const r of c.representanteAtual || []) {
       const id = codigo(r.codigo);
-      if (id) opcoesRepresentantes.set(id, texto(r.nome) || id);
+      if (id && (representantesAutorizados === null || representantesAutorizados.includes(id))) opcoesRepresentantes.set(id, texto(r.nome) || id);
     }
   }
 

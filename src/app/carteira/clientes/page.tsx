@@ -8,6 +8,7 @@ import Link from "next/link";
 import { cookies } from "next/headers";
 import { redirect } from "next/navigation";
 import { validarToken } from "@/lib/auth";
+import { acessoGlobal, regionaisPermitidas, representantesPermitidos } from "@/lib/escopo-acesso";
 import Sidebar from "@/components/Sidebar";
 
 export const runtime = "nodejs";
@@ -117,29 +118,59 @@ export default async function ListaCarteira({ searchParams }: Props) {
   }
 
   // Primeiro restringe os registros autorizados.
-  if (perfil === "REPRESENTANTE") {
+  // Escopo obrigatorio antes de qualquer filtro da interface.
+  const acessoNacional = acessoGlobal(u);
+
+  const regionaisAutorizadas = acessoNacional
+    ? null
+    : await regionaisPermitidas(u);
+
+  if (perfil === "REPRESENTANTE" || perfil === "REP") {
     clientes = clientes.filter(c =>
-      c.representanteAtual?.some(r => cod(r.codigo) === repLogin)
+      c.representanteAtual?.some(r =>
+        cod(r.codigo) === repLogin
+      )
     );
-  } else if (perfil === "SUPERVISOR") {
+  } else if (
+    !acessoNacional &&
+    (perfil === "GERENTE" || perfil === "SUPERVISOR")
+  ) {
     clientes = clientes.filter(c =>
-      c.supervisores?.some(s => cod(s.codigo) === supLogin)
+      c.supervisores?.some(s =>
+        regionaisAutorizadas?.has(cod(s.codigo))
+      )
     );
-  } else if (!["ADMIN", "ADMINISTRADOR", "GERENTE"].includes(perfil)) {
+  } else if (!acessoNacional) {
     clientes = [];
   }
+
+  const repsAutorizados = await representantesPermitidos(u);
 
   if (gerenteFiltro) {
     clientes = clientes.filter(c => c.supervisores?.some(s => regionaisGerente.has(cod(s.codigo))));
   }
 
-  if (supervisor) {
+  // Bloquear consulta direta a regional fora da permissao.
+  if (
+    supervisor &&
+    regionaisAutorizadas !== null &&
+    !regionaisAutorizadas.has(supervisor)
+  ) {
+    clientes = [];
+  } else if (supervisor) {
     clientes = clientes.filter(c =>
       c.supervisores?.some(s => cod(s.codigo) === supervisor)
     );
   }
 
-  if (representante) {
+  // Bloquear consulta direta a representante nao autorizado.
+  if (
+    representante &&
+    repsAutorizados !== null &&
+    !repsAutorizados.includes(representante)
+  ) {
+    clientes = [];
+  } else if (representante) {
     clientes = clientes.filter(c =>
       c.representanteAtual?.some(r => cod(r.codigo) === representante)
     );

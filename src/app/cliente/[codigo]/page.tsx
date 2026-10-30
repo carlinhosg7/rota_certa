@@ -14,6 +14,8 @@ import { redirect } from "next/navigation";
 import { cookies } from "next/headers";
 
 import { validarToken } from "@/lib/auth";
+import { acessoGlobal, regionaisPermitidas, representantesPermitidos } from "@/lib/escopo-acesso";
+import { notFound } from "next/navigation";
 import ResultadoAtendimento from "@/components/ResultadoAtendimento";
 import GestaoReativacao from "@/components/GestaoReativacao";
 import ClassificacaoCliente from "@/components/ClassificacaoCliente";
@@ -79,6 +81,42 @@ export default async function ClientePage({ params }: Props) {
 
   const inicioDados = performance.now();
   const codigoLimpo = cleanCode(codigo);
+
+  // Validacao de acesso antes de carregar dados comerciais.
+  if (!acessoGlobal(usuario)) {
+    const perfil = String(usuario.perfil ?? "").toUpperCase();
+
+    const cadastroBase = await carregarCarteira2027();
+    const cadastro = cadastroBase.clientes.find(
+      c => cleanCode(String(c.codigoCliente)) === codigoLimpo
+    );
+
+    if (!cadastro) {
+      notFound();
+    }
+
+    if (perfil === "REPRESENTANTE" || perfil === "REP") {
+      const reps = await representantesPermitidos(usuario);
+
+      const autorizado = cadastro.representanteAtual?.some(
+        r => reps?.includes(String(r.codigo).trim())
+      );
+
+      if (!autorizado) notFound();
+
+    } else if (perfil === "SUPERVISOR" || perfil === "GERENTE") {
+      const regionais = await regionaisPermitidas(usuario);
+
+      const autorizado = cadastro.supervisores?.some(
+        s => regionais?.has(String(s.codigo).trim())
+      );
+
+      if (!autorizado) notFound();
+
+    } else {
+      notFound();
+    }
+  }
 
   const {
     carteira,

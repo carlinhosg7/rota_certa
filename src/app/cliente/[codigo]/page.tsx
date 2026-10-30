@@ -267,12 +267,20 @@ const janelaComercial = await calcularJanelaCompraFaturamento(
       : null,
   })).sort((a, b) => b.valor - a.valor);
 
+  // A lista oficial de produtos autorizados ja e carregada pelo sistema.
+  // Codigo da linha pode vir como 007 ou 7; a chave normalizada e identica.
+  const normalizarLinha360 = (v: unknown) => String(v ?? "").trim().replace(/^0+(?=\d)/, "");
+  const linhasAtivas360 = new Set(produtosAutorizados.map(p => normalizarLinha360(p.codigoLinha)).filter(Boolean));
+  const refsAtivas360 = new Set(produtosAutorizados.map(p => cleanReferencia(p.referencia)).filter(Boolean));
+  const linhaPlay360 = "7";
+  const playAtiva360 = linhasAtivas360.has(linhaPlay360);
+
   const maxValorLinha = Math.max(1, ...mixLinhas.map((m) => m.valor));
   const maxParesLinha = Math.max(1, ...mixLinhas.map((m) => m.pares));
   const maxPedidosLinha = Math.max(1, ...mixLinhas.map((m) => m.pedidos.size));
   const maxDiasLinha = Math.max(1, ...mixLinhas.map((m) => Math.min(m.diasSemCompra ?? 0, 365)));
 
-  const oportunidades = mixLinhas.map((m) => {
+  const oportunidades = mixLinhas.filter(m => linhasAtivas360.has(normalizarLinha360(m.codigoLinha))).map((m) => {
     const recencia = Math.min(m.diasSemCompra ?? 0, 365) / maxDiasLinha;
     const frequencia = m.pedidos.size / maxPedidosLinha;
     const volume = m.pares / maxParesLinha;
@@ -308,6 +316,7 @@ const janelaComercial = await calcularJanelaCompraFaturamento(
   }
 
   const referencias = [...refMap.values()]
+    .filter(r => linhasAtivas360.has(normalizarLinha360(r.codigoLinha)) && refsAtivas360.has(cleanReferencia(r.referencia)))
     .sort((a, b) => b.pares - a.pares || b.valor - a.valor)
     .slice(0, 12);
 
@@ -456,7 +465,9 @@ const janelaComercial = await calcularJanelaCompraFaturamento(
       const codigoLinha = v.codigoLinha || "";
       const linha = v.linha || (codigoLinha ? `Linha ${codigoLinha}` : "");
       const chave = codigoLinha || linha;
-      if (!chave || linhasCliente.has(chave)) continue;
+      // PLAY sempre participa da avaliacao, mesmo para cliente que ja a comprou.
+      if (!chave || !linhasAtivas360.has(normalizarLinha360(codigoLinha)) ||
+        (linhasCliente.has(chave) && normalizarLinha360(codigoLinha) !== linhaPlay360)) continue;
 
       const atual = porLinhaCliente.get(chave) || { codigoLinha, linha, pares: 0, valor: 0 };
       atual.pares += v.qtd || 0;
@@ -502,7 +513,7 @@ const janelaComercial = await calcularJanelaCompraFaturamento(
     return a.length % 2 ? a[m] : (a[m - 1] + a[m]) / 2;
   }
 
-  const produtosPotenciais = [...potencialMap.values()]
+  const produtosPotenciaisCalculados = [...potencialMap.values()]
     .map((p) => {
       const penetracao = grupoSimilar.length
         ? (p.clientes.size / grupoSimilar.length) * 100
@@ -531,7 +542,29 @@ const janelaComercial = await calcularJanelaCompraFaturamento(
     .sort((a, b) => b.score - a.score || b.penetracao - a.penetracao)
     .slice(0, 8);
 
-  const principalPotencial = produtosPotenciais[0] || null;
+  // PLAY e prioridade comercial para todos os clientes, inclusive compradores.
+  // Se nao houver compras entre similares, usamos 0 real e nao inventamos score.
+  const produtosPotenciais = (() => {
+    if (!playAtiva360) return produtosPotenciaisCalculados;
+    const playEncontrada = produtosPotenciaisCalculados.find(p => normalizarLinha360(p.codigoLinha) === linhaPlay360);
+    const playBase = produtosAutorizados.find(p => normalizarLinha360(p.codigoLinha) === linhaPlay360);
+    const play = playEncontrada ?? {
+      chave: playBase?.codigoLinha ?? "007",
+      codigoLinha: playBase?.codigoLinha ?? "007",
+      linha: playBase?.linha || "TENIS KIDY PLAY RESPITEC",
+      clientes: new Set<string>(),
+      pares: [] as number[],
+      valores: [] as number[],
+      referencias: new Map<string, { referencia: string; pares: number; clientes: Set<string> }>(),
+      penetracao: 0, paresMedianos: 0, valorMediano: 0,
+      refs: [] as { referencia: string; pares: number; clientes: Set<string> }[],
+      score: 0,
+      potencial: "ALTO",
+    };
+    return [play, ...produtosPotenciaisCalculados.filter(p => normalizarLinha360(p.codigoLinha) !== linhaPlay360)].slice(0, 8);
+  })();
+
+  const principalPotencial = produtosPotenciais.find(p => normalizarLinha360(p.codigoLinha) !== linhaPlay360 && p.clientes.size > 0) || null;
 
 
   // ============================================================
@@ -962,6 +995,26 @@ const janelaComercial = await calcularJanelaCompraFaturamento(
 
             <div style={styles.localizacao}>
               {cliente.cidade} / {cliente.uf}
+            </div>
+
+            <div style={{ marginTop: 12 }}>
+              <span style={{
+                display: "inline-block",
+                background: "#fff",
+                color: "#9a4e00",
+                padding: "7px 13px",
+                borderRadius: 8,
+                fontSize: 12,
+                fontWeight: 800
+              }}>
+                CARTEIRA: {
+                  cadastro2027?.carteira === "01_ATIVA"
+                    ? "01 — ATIVA"
+                    : cadastro2027?.carteira === "02_REATIVACAO"
+                    ? "02 — REATIVAÇÃO"
+                    : "NÃO CLASSIFICADA"
+                }
+              </span>
             </div>
           </div>
 
@@ -1508,7 +1561,10 @@ const janelaComercial = await calcularJanelaCompraFaturamento(
               </tr></thead>
               <tbody>{mixLinhas.slice(0,12).map((m) => (
                 <tr key={m.chave}>
-                  <td style={styles.td}><div style={styles.linhaNome}>{m.linha}</div>{m.codigoLinha && <div style={styles.linhaCodigo}>Cód. {m.codigoLinha}</div>}</td>
+                  <td style={styles.td}><div style={styles.linhaNome}>{m.linha}</div>{m.codigoLinha && <div style={styles.linhaCodigo}>Cód. {m.codigoLinha}</div>}
+                    <small style={{color: linhasAtivas360.has(normalizarLinha360(m.codigoLinha)) ? "#15803d" : "#92400e", fontWeight: 700}}>
+                      {linhasAtivas360.has(normalizarLinha360(m.codigoLinha)) ? "● Linha ativa na lista comercial" : "Histórico — fora da lista atual"}
+                    </small></td>
                   <td style={styles.tdRight}>{numero(m.pares)}</td><td style={styles.tdRight}>{moeda(m.valor)}</td>
                   <td style={styles.tdRight}>{numero(m.pedidos.size)}</td><td style={styles.tdRight}>{dataBR(m.ultimaCompra)}</td>
                   <td style={styles.tdRight}>{m.diasSemCompra === null ? "—" : numero(m.diasSemCompra)}</td>
@@ -1573,6 +1629,8 @@ const janelaComercial = await calcularJanelaCompraFaturamento(
                   <div style={styles.oportunidadeTopo}>
                     <div>
                       <div style={styles.oportunidadeLinha}>{p.linha}</div>
+                      {normalizarLinha360(p.codigoLinha) === linhaPlay360 &&
+                        <div style={{fontSize: 11, fontWeight: 800, color: "#b45309", marginTop: 5}}>★ PLAY — PRIORIDADE KIDY</div>}
                       {p.codigoLinha && <div style={styles.linhaCodigo}>Cód. {p.codigoLinha}</div>}
                     </div>
                     <div style={{
@@ -1587,9 +1645,11 @@ const janelaComercial = await calcularJanelaCompraFaturamento(
                     </div>
                   </div>
 
-                  <div style={styles.penetracaoNumero}>{p.penetracao.toFixed(0)}%</div>
+                  <div style={styles.penetracaoNumero}>{p.clientes.size ? `${p.penetracao.toFixed(0)}%` : "—"}</div>
                   <div style={styles.penetracaoLegenda}>
-                    dos clientes semelhantes compram esta linha
+                    {normalizarLinha360(p.codigoLinha) === linhaPlay360
+                      ? "Linha PLAY obrigatória na abordagem comercial. Repor ou ampliar o mix, conforme histórico."
+                      : p.clientes.size ? "dos clientes semelhantes compram esta linha" : "Sem amostra semelhante suficiente"}
                   </div>
 
                   <div style={styles.potencialMetricas}>

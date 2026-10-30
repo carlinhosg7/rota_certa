@@ -1,6 +1,7 @@
 "use client";
 
 import { FormEvent, useEffect, useState } from "react";
+import CheckinAtendimento from "./CheckinAtendimento";
 
 type Props = {
   codigoCliente: string;
@@ -205,6 +206,8 @@ export default function ResultadoAtendimento({
         Registre o que aconteceu na visita para acompanhar conversão, campanhas
         e próximas oportunidades deste cliente.
       </div>
+
+      <CheckinAtendimento codigoCliente={codigoCliente} nomeCliente={nomeCliente} />
 
       <form onSubmit={salvar}>
         <div style={s.grid}>

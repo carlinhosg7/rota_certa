@@ -749,3 +749,50 @@ a{
     margin-right: auto;
   }
 }
+
+/* KIDY SIDEBAR SCROLL INICIO */
+
+/* Menu lateral com rolagem independente */
+.sidebar:not(.is-collapsed) {
+  box-sizing: border-box;
+  height: 100vh;
+  height: 100dvh;
+  max-height: 100dvh;
+  overflow-y: auto;
+  overflow-x: hidden;
+  overscroll-behavior-y: contain;
+  scrollbar-width: thin;
+  scrollbar-color: #bd6500 transparent;
+}
+
+/* Barra de rolagem no Chrome e Edge */
+.sidebar:not(.is-collapsed)::-webkit-scrollbar {
+  width: 7px;
+}
+
+.sidebar:not(.is-collapsed)::-webkit-scrollbar-thumb {
+  background: #bd6500;
+  border-radius: 10px;
+}
+
+.sidebar:not(.is-collapsed)::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+/* Permite que todos os itens sejam alcançados */
+.sidebar:not(.is-collapsed) .userbox {
+  flex-shrink: 0;
+  padding-bottom: 12px;
+}
+
+/* Telas menores */
+@media (max-width: 1000px) {
+  .sidebar:not(.is-collapsed) {
+    position: relative;
+    height: auto;
+    max-height: 100dvh;
+    overflow-y: auto;
+  }
+}
+
+/* KIDY SIDEBAR SCROLL FIM */

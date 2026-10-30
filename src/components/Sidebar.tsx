@@ -51,12 +51,12 @@ export default function Sidebar({ nome, perfil, usuario }: Props) {
   }
 
   const itens = [
-
     { titulo: "Visão Comercial", href: "/dashboard#planejamento", rota: "/dashboard" },
-    { titulo: "Venda Mais+", href: "/dashboard#venda-mais", rota: "" },
-    { titulo: "Análise Preditiva", href: "/dashboard#clientes", rota: "" },
     { titulo: "Metas", href: "/metas", rota: "/metas" },
     { titulo: "Share", href: "/share", rota: "/share" },
+    { titulo: "Gestão de Atendimentos", href: "/gestao-atendimentos", rota: "/gestao-atendimentos" },
+    { titulo: "Venda Mais+", href: "/dashboard#venda-mais", rota: "" },
+    { titulo: "Análise Preditiva", href: "/dashboard#clientes", rota: "" },
     { titulo: "Gestão de Carteira 2027", href: "/carteira", rota: "/carteira" }
   ];
 

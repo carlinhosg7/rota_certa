@@ -2,6 +2,8 @@ import { NextRequest, NextResponse } from "next/server";
 
 import { validarToken } from "@/lib/auth";
 import { supabase } from "@/lib/supabase";
+import { representantesPermitidos } from "@/lib/escopo-acesso";
+import { carregarCarteira2027 } from "@/lib/carteira-2027-data";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -93,6 +95,15 @@ export async function GET(req: NextRequest) {
   }
 
   try {
+    const permitidos = await representantesPermitidos(usuarioLogado);
+
+    if (permitidos !== null && permitidos.length === 0) {
+      return NextResponse.json(
+        { sucesso: false, erro: "Sem representantes autorizados." },
+        { status: 403 }
+      );
+    }
+
     const { searchParams } = new URL(req.url);
 
     const cliente = texto(searchParams.get("cliente"), 50);
@@ -110,6 +121,21 @@ export async function GET(req: NextRequest) {
 
     if (representante) {
       query = query.eq("codigo_representante", representante);
+    }
+
+    if (
+      permitidos !== null &&
+      representante &&
+      !permitidos.includes(representante)
+    ) {
+      return NextResponse.json(
+        { sucesso: false, erro: "Representante fora do seu acesso." },
+        { status: 403 }
+      );
+    }
+
+    if (permitidos !== null) {
+      query = query.in("codigo_representante", permitidos);
     }
 
     const { data, error } = await query;
@@ -186,6 +212,40 @@ export async function POST(req: NextRequest) {
       );
     }
 
+    // Permissoes validadas no servidor, nunca pelo navegador.
+    const permitidos = await representantesPermitidos(usuarioLogado);
+
+    if (
+      permitidos !== null &&
+      !permitidos.includes(codigoRepresentante)
+    ) {
+      return NextResponse.json(
+        { sucesso: false, erro: "Representante nao autorizado." },
+        { status: 403 }
+      );
+    }
+
+    // Confirma que o cliente pertence ao representante informado.
+    const carteira = await carregarCarteira2027();
+
+    const normalizarCodigo = (valor: unknown) =>
+      String(valor ?? "").trim().replace(/\\.0+$/, "");
+
+    const cadastro = carteira.clientes.find(
+      (c) => normalizarCodigo(c.codigoCliente) === normalizarCodigo(codigoCliente)
+    );
+
+    const clienteAutorizado = cadastro?.representanteAtual?.some(
+      (r) => normalizarCodigo(r.codigo) === normalizarCodigo(codigoRepresentante)
+    );
+
+    if (!clienteAutorizado) {
+      return NextResponse.json(
+        { sucesso: false, erro: "Cliente fora da carteira do representante." },
+        { status: 403 }
+      );
+    }
+
     const pedidoRealizado = body.pedido_realizado === true;
 
     const registro = {
@@ -195,7 +255,7 @@ export async function POST(req: NextRequest) {
 
       // O formulário enviará apenas a identificação exibida na sessão.
       // A API nunca recebe nem expõe SUPABASE_SECRET_KEY.
-      usuario: texto(body.usuario, 250),
+      usuario: texto(usuarioLogado.usuario, 250),
 
       resultado,
 

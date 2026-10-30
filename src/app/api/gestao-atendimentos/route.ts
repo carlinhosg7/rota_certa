@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { validarToken } from "@/lib/auth";
+import { representantesPermitidos as obterRepresentantesPermitidos } from "@/lib/escopo-acesso";
 import { supabase } from "@/lib/supabase";
 
 export const runtime = "nodejs";
@@ -14,45 +15,18 @@ export async function GET(req: NextRequest) {
     const sessao = token ? await validarToken(token) : null;
     if (!sessao) return NextResponse.json({ erro: "Não autenticado" }, { status: 401 });
 
-    const perfil = normalizar(sessao.perfil);
-    const administrador = perfil === "ADMIN" || perfil === "ADMINISTRADOR" || perfil === "DIRETOR";
-    if (!administrador && !["GERENTE", "SUPERVISOR", "REPRESENTANTE", "REP"].includes(perfil)) {
-      return NextResponse.json({ erro: "Perfil sem acesso" }, { status: 403 });
-    }
+    // Escopo centralizado: nunca confiar no filtro do navegador.
+    const representantesPermitidos =
+      await obterRepresentantesPermitidos(sessao);
 
-    // O escopo de acesso é derivado exclusivamente da sessão e do cadastro oficial,
-    // jamais do filtro de representante enviado pelo navegador.
-    let representantesPermitidos: string[] | null = null;
-    if (perfil === "REPRESENTANTE" || perfil === "REP") {
-      const rep = codigo(sessao.codigo_representante);
-      if (!rep) return NextResponse.json({ erro: "Representante sem vínculo" }, { status: 403 });
-      representantesPermitidos = [rep];
-    } else if (perfil === "SUPERVISOR" || perfil === "GERENTE") {
-      const { data: reps, error: erroReps } = await supabase
-        .from("representantes_cadastro")
-        .select("codigo_rep,codigo_supervisor,regional,ativo");
-      if (erroReps) throw erroReps;
-      let supervisores = new Set<string>();
-      if (perfil === "SUPERVISOR") {
-        const sup = codigo(sessao.codigo_supervisor);
-        if (!sup) return NextResponse.json({ erro: "Supervisor sem vínculo" }, { status: 403 });
-        supervisores.add(sup);
-      } else {
-        const nomeGerente = normalizar(sessao.gerente || sessao.nome);
-        if (!nomeGerente) return NextResponse.json({ erro: "Gerente sem vínculo" }, { status: 403 });
-        const { data: regionais, error: erroGerentes } = await supabase
-          .from("kidy_gerentes_regionais")
-          .select("codigo_supervisor,gerente,ativo").eq("ativo", true);
-        if (erroGerentes) throw erroGerentes;
-        supervisores = new Set((regionais ?? [])
-          .filter(r => normalizar(r.gerente) === nomeGerente)
-          .map(r => codigo(r.codigo_supervisor)));
-        if (!supervisores.size) return NextResponse.json({ erro: "Gerente sem regionais vinculadas" }, { status: 403 });
-      }
-      representantesPermitidos = (reps ?? [])
-        .filter(r => r.ativo !== false && supervisores.has(codigo(r.codigo_supervisor)))
-        .map(r => codigo(r.codigo_rep)).filter(Boolean);
-      if (!representantesPermitidos.length) return NextResponse.json({ atendimentos: [], total: 0, pagina: 1, paginas: 0 });
+    if (
+      representantesPermitidos !== null &&
+      representantesPermitidos.length === 0
+    ) {
+      return NextResponse.json(
+        { erro: "Sem representantes autorizados" },
+        { status: 403 }
+      );
     }
 
     const url = new URL(req.url);

@@ -301,13 +301,47 @@ export async function GET(req: NextRequest) {
       );
     }
 
-    const { inicio, fim } = periodoFonte;
+    let { inicio, fim } = periodoFonte;
+
+    // O arquivo oficial de metas pode estar em uma competencia
+    // posterior ao relatorio de realizado disponivel.
+    // Neste caso, mostrar a meta mais recente sem aproveitar
+    // vendas de uma competencia anterior.
+    let realizadoDesatualizado = false;
+
+    if (periodoValidado === "MENSAL") {
+      const competencias = metasOriginais
+        .filter(item =>
+          Number.isInteger(item.ano) &&
+          Number.isInteger(item.mes) &&
+          item.mes >= 1 &&
+          item.mes <= 12
+        )
+        .map(item => item.ano * 100 + item.mes);
+
+      const ultimaMeta = competencias.length
+        ? Math.max(...competencias)
+        : 0;
+
+      const competenciaFonte =
+        inicio.getUTCFullYear() * 100 +
+        inicio.getUTCMonth() + 1;
+
+      if (ultimaMeta > competenciaFonte) {
+        const anoMeta = Math.floor(ultimaMeta / 100);
+        const mesMeta = ultimaMeta % 100;
+
+        inicio = dataUTC(anoMeta, mesMeta, 1);
+        fim = dataUTC(anoMeta, mesMeta + 1, 0);
+        realizadoDesatualizado = true;
+      }
+    }
 
     // No faturamento, as colunas AA já pertencem ao
     // mesmo relatório e período da fonte atual.
     // Na entrada, o relatório anterior deve corresponder
     // ao mesmo mês do ano anterior.
-    let fonteAAValidada = fonteAA;
+    let fonteAAValidada = realizadoDesatualizado ? null : fonteAA;
 
     if (fonteAA && tipoValidado === "ENTRADA") {
       const periodoAA = extrairPeriodo(fonteAA.periodoOriginal);
@@ -379,7 +413,7 @@ export async function GET(req: NextRequest) {
       }
     }
 
-    const supervisoresPermitidos = supervisoresDaFonte(
+    const supervisoresPermitidos = realizadoDesatualizado ? null : supervisoresDaFonte(
       tipoValidado,
       periodoValidado,
       fonte.filtrosOriginais
@@ -563,7 +597,7 @@ export async function GET(req: NextRequest) {
         return primeiroDia <= fim && ultimoDia >= inicio;
       });
 
-    const realizados = fonte.registros
+    const realizados = (realizadoDesatualizado ? [] : fonte.registros)
       .map((item) => normalizarRealizado(item, mapa))
       .filter((item) =>
         permitirRepresentante(item.codigoRepresentante) &&
@@ -636,6 +670,13 @@ export async function GET(req: NextRequest) {
       : null;
 
     const avisos: string[] = [
+      ...(realizadoDesatualizado
+        ? [
+            "Meta oficial atualizada para a competencia mais recente.",
+            "O relatorio de realizado pertence a uma competencia anterior.",
+            "Realizado e percentual de atingimento indisponiveis para a competencia das metas. Nao interpretar zero como vendas zeradas."
+          ]
+        : []),
       "Códigos normalizados pelo cadastro oficial e De/Para do Supabase.",
       "Metas sem realizado permanecem no cálculo com realizado zero.",
       "Realizados sem meta são apresentados separadamente para auditoria.",
@@ -705,6 +746,8 @@ export async function GET(req: NextRequest) {
       },
 
       periodo: {
+        realizadoCompativel: !realizadoDesatualizado,
+        realizadoOriginal: fonte.periodoOriginal,
         inicio: inicio.toISOString().slice(0, 10),
         fim: fim.toISOString().slice(0, 10),
         original: fonte.periodoOriginal,

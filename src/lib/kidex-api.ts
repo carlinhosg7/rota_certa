@@ -16,7 +16,27 @@ export async function responderKidex(req: NextRequest, usuario: any) {
   const visao = q.get('visao') || 'CADASTRO';
   if (!['MENSAL','SEMANAL'].includes(periodicidade) || !['CADASTRO','ENTREGA'].includes(visao)) return NextResponse.json({erro:'Filtro KIDEX inválido'},{status:400});
   const {atual,anterior,metas:metasOriginais} = await carregarKidex();
-  const ano = atual.periodo.inicio.getUTCFullYear(), mes = atual.periodo.inicio.getUTCMonth()+1;
+  let ano = atual.periodo.inicio.getUTCFullYear();
+  let mes = atual.periodo.inicio.getUTCMonth() + 1;
+
+  // Comparar a competencia das metas com a fonte de realizado.
+  const competenciaFonte = ano * 100 + mes;
+  const competenciasMetas = metasOriginais
+    .filter(m => m.ano >= 2020 && m.mes >= 1 && m.mes <= 12)
+    .map(m => m.ano * 100 + m.mes);
+
+  const ultimaCompetenciaMeta = competenciasMetas.length
+    ? Math.max(...competenciasMetas)
+    : 0;
+
+  const realizadoDesatualizado =
+    periodicidade === 'MENSAL' &&
+    ultimaCompetenciaMeta > competenciaFonte;
+
+  if (realizadoDesatualizado) {
+    ano = Math.floor(ultimaCompetenciaMeta / 100);
+    mes = ultimaCompetenciaMeta % 100;
+  }
   let inicio = inicioMes(ano,mes), fim = fimMes(ano,mes);
   if (periodicidade === 'SEMANAL') {
     // Semana corrente: domingo a sábado, limitada ao mês de referência da fonte.
@@ -64,12 +84,12 @@ export async function responderKidex(req: NextRequest, usuario: any) {
     return {...l,rep:oficial.codigo,supervisor:cod(oficial.supervisor)};
   });
   const coluna = visao==='CADASTRO' ? 'cadastro' : 'entrega';
-  const realizados = normalizar(atual.linhas).filter(l=>entre(l[coluna],inicio,fim) && acesso(l.rep,l.supervisor));
+  const realizados = (realizadoDesatualizado ? [] : normalizar(atual.linhas)).filter(l=>entre(l[coluna],inicio,fim) && acesso(l.rep,l.supervisor));
   const conciliados = realizados.filter(l=>universo.has(l.rep));
   const realizado = soma(conciliados);
   // AA somente se a fonte realmente for do mesmo mês do ano anterior.
   const periodoAA = anterior.periodo;
-  const aaValido = periodicidade==='MENSAL' && periodoAA.inicio.getUTCFullYear()===ano-1 && periodoAA.inicio.getUTCMonth()+1===mes && periodoAA.fim.getUTCFullYear()===ano-1;
+  const aaValido = !realizadoDesatualizado && periodicidade==='MENSAL' && periodoAA.inicio.getUTCFullYear()===ano-1 && periodoAA.inicio.getUTCMonth()+1===mes && periodoAA.fim.getUTCFullYear()===ano-1;
   const inicioAA = inicioMes(ano-1,mes), fimAA = fimMes(ano-1,mes);
   const realizadosAA = aaValido ? normalizar(anterior.linhas).filter(l=>entre(l[coluna],inicioAA,fimAA) && acesso(l.rep,l.supervisor) && universo.has(l.rep)) : [];
   const aa = aaValido ? soma(realizadosAA) : null;
@@ -78,6 +98,11 @@ export async function responderKidex(req: NextRequest, usuario: any) {
   const semMetaAgrupados = new Map<string,{codigo:string;nome:string;pares:number;valor:number}>();
   for (const l of semMeta) { const atual = semMetaAgrupados.get(l.rep) || {codigo:l.rep,nome:l.nome,pares:0,valor:0}; atual.pares+=l.pares;atual.valor+=l.valores;semMetaAgrupados.set(l.rep,atual); }
   const avisos = [
+    ...(realizadoDesatualizado ? [
+      'Metas atualizadas para a competencia mais recente.',
+      'Realizado indisponivel: a fonte de pedidos pertence a um mes anterior.',
+      'Nao considerar realizado zero nem percentual zero como resultado oficial.'
+    ] : []),
     'KIDEX exclusivo: pedido tipo 4 (Pronta Entrega).',
     visao==='CADASTRO'?'Entrada KIDEX por Data Cadastro.':'Venda para Faturamento Dentro do Mês por Data Entrega; não é faturamento fiscal.',
     'Fonte de pedidos KIDEX já segmentada como Pronta Entrega.',
@@ -90,7 +115,14 @@ export async function responderKidex(req: NextRequest, usuario: any) {
   return NextResponse.json({
     tipo:'KIDEX',visao,periodicidade,pedido:'4',
     filtros:{regional:regionalFiltro,representante:repFiltro,regionais:[...regionais].map(([codigo,nome])=>({codigo,nome})),representantes},
-    periodo:{inicio:iso(inicio),fim:iso(fim),original:`${visao==='CADASTRO'?'Data Cadastro':'Data Entrega'}: ${inicio.toLocaleDateString('pt-BR',{timeZone:'UTC'})} à ${fim.toLocaleDateString('pt-BR',{timeZone:'UTC'})}`},
+    periodo:{
+      realizadoCompativel: !realizadoDesatualizado,
+      periodoFonteRealizado: atual.periodo.texto,
+      inicio:iso(inicio),
+      fim:iso(fim),
+      original: realizadoDesatualizado
+        ? `Meta oficial: ${String(mes).padStart(2,'0')}/${ano} | Realizado indisponivel`
+        :`${visao==='CADASTRO'?'Data Cadastro':'Data Entrega'}: ${inicio.toLocaleDateString('pt-BR',{timeZone:'UTC'})} à ${fim.toLocaleDateString('pt-BR',{timeZone:'UTC'})}`},
     indicadores:{pares:{...calcularIndicador(meta.pares,realizado.pares),realizadoAA:aa?.pares??null},valores:{...calcularIndicador(meta.valores,realizado.valores),realizadoAA:aa?.valores??null}},
     comparabilidade:{validada:false,escopo:'FONTE_KIDEX',supervisores:[],possuiExclusoes:/Exceto/i.test(atual.metadados)},
     conciliacao:{representantesComMeta:universo.size,representantesNoRealizado:new Set(realizados.map(l=>l.rep)).size,representantesConciliados:comRealizado.size,representantesSemRealizado:[...universo].filter(r=>!comRealizado.has(r)),representantesSemMeta:[...semMetaAgrupados.values()]},

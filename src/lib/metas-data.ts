@@ -154,7 +154,7 @@ export async function carregarMetas(
   const iRep = indice("CODIGO_REP");
   const iNome = indice("REP");
   const iAno = indice("ANO");
-  const iMes = indice("MÊS");
+  const iMes = indice("M\u00caS");
   const iTipo = indice("ID_TIPO_PEDIDO");
   const iQtd = indice("META_QUANTIDADE");
   const iValor = indice("META_VALOR");
@@ -183,7 +183,10 @@ export async function carregarMetas(
 
     // Registros sinalizados como duplicados não entram no cálculo.
     if (
-      texto(linha[iDuplos]).toUpperCase() !== "NÃO"
+      texto(linha[iDuplos])
+        .normalize("NFD")
+        .replace(/[\u0300-\u036f]/g, "")
+        .toUpperCase() !== "NAO"
     ) {
       continue;
     }

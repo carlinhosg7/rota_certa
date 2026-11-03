@@ -1,0 +1,51 @@
+.layout{display:flex;flex-direction:column;gap:18px;max-width:100%;min-width:0;color:#172d43;padding-bottom:32px}
+.headerPanel{display:flex;justify-content:space-between;align-items:end;gap:24px;padding:17px 19px;border:1px solid #e1e6ed;border-radius:14px;background:#fff}
+.headerCopy h2{font-size:21px;margin:5px 0;color:#132840}.headerCopy p{margin:0;color:#607287;font-size:13px}.eyebrow{font-size:10px;letter-spacing:1.8px;font-weight:800;color:#e37c11}
+.filters{display:flex;gap:12px;flex-wrap:wrap}.filters label{display:flex;flex-direction:column;gap:5px;font-size:11px;font-weight:700;color:#607287}.filters select{padding:10px 12px;border:1px solid #ced8e4;border-radius:9px;background:#fff;color:#172d43;font-size:13px;max-width:240px;min-width:175px}
+.topArea{display:grid;grid-template-columns:minmax(280px,460px) minmax(200px,1fr);gap:15px}.topSummary{border:1px solid #e1e6ed;border-radius:14px;background:#fff;padding:20px;display:grid;grid-template-columns:1fr 1fr;gap:16px;align-content:center}.topSummary>div{display:flex;flex-direction:column;gap:7px}.topSummary span{font-size:12px;color:#607287}.topSummary strong{font-size:28px;color:#183653}.topSummary strong small{font-size:14px;font-weight:500;color:#748398}.topSummary p{grid-column:1/-1;margin:0;color:#718092;font-size:12px;line-height:1.5}
+.section{display:flex;flex-direction:column;gap:12px}.sectionHeading{display:flex;justify-content:space-between;align-items:center;gap:12px;flex-wrap:wrap}.sectionHeading h3{margin:0;font-size:17px;color:#163047}.sectionHeading span{font-size:12px;color:#75849a}
+.tanksRow{display:grid;grid-template-columns:repeat(5,minmax(145px,1fr));gap:12px}.tankCard{background:#fff;border:1px solid #dfe5ed;border-radius:14px;padding:15px;min-height:150px;display:flex;justify-content:space-between;gap:10px;position:relative;overflow:hidden}.tankGeneral{min-height:180px;border-color:#e8d5bb;background:linear-gradient(120deg,#fff,#fff8f0)}.tankInformation{display:flex;flex-direction:column;gap:9px;justify-content:center;min-width:0}.tankLabel{font-weight:800;font-size:13px;color:#274258}.tankPoints{font-size:24px;white-space:nowrap;color:#152d45}.tankPoints small{font-size:12px;color:#65758b;font-weight:500}.tankStatus{font-size:11px;color:#8a6c4b;line-height:1.3}
+.tank{position:relative;align-self:center;width:61px;height:115px;flex:0 0 61px;border:4px solid #b5c7d9;border-radius:13px 13px 20px 20px;box-shadow:inset 0 0 0 2px #ebf1f7,0 3px 9px #dfe8ef;background:linear-gradient(180deg,#fff,#f5f9fc);overflow:hidden}.tankGeneral .tank{width:82px;height:144px;flex-basis:82px}.tankTicks{position:absolute;inset:7px 4px;display:flex;flex-direction:column;justify-content:space-between;align-items:flex-end;font-size:9px;font-weight:700;color:#8192a7;z-index:1}.tankWater{position:absolute;bottom:0;left:0;right:0;background:linear-gradient(#77bde7,#2679b3);transition:height .5s ease}
+.tableScroll{border:1px solid #dbe3ee;border-radius:12px;overflow-x:auto;background:#fff}.matrix{border-collapse:separate;border-spacing:0;width:100%;min-width:1200px;table-layout:fixed;font-size:12px}.matrix th,.matrix td{padding:13px 11px;vertical-align:top;border-bottom:1px solid #e7ebf2;border-right:1px solid #e7ebf2}.matrix thead th{background:#203b56;color:white;font-weight:800;text-align:left;font-size:11px;letter-spacing:.3px}.matrix thead th:first-child{width:170px}.matrix thead th:last-child{background:#274e70}.matrix tbody th{position:sticky;left:0;background:#f7f9fc;text-align:left;z-index:1}.matrix tbody th strong{display:block;font-size:13px}.matrix tbody th small{display:block;font-size:11px;color:#77869c;margin-top:7px;font-weight:500}.matrix tbody tr:last-child td,.matrix tbody tr:last-child th{border-bottom:0}.cell{display:flex;flex-direction:column;gap:8px}.cellLine{display:flex;flex-direction:column;gap:2px}.cellLine small{font-size:10px;color:#8290a0}.cellLine strong{font-weight:800;color:#163b60;font-size:13px}.cellLine span{font-weight:600}.cellState{font-size:10px;line-height:1.4;color:#9d752e;background:#fff7e7;border-radius:5px;padding:5px}.missing{color:#8794a5;font-size:11px}.totalCell{background:#f3f8fc}.pointsRow th,.pointsRow td{background:#fff6e9!important;color:#6d450e;font-weight:700}.pointsRow td strong,.pointsRow td small{display:block}.pointsRow td small{font-size:10px;margin-top:7px;font-weight:500}.secondaryButton{border:1px solid #cdd8e5;color:#274a68;background:#fff;padding:8px 12px;border-radius:8px;cursor:pointer;font-size:12px;font-weight:700}.tableNote{font-size:11px;color:#68778b;margin:0;line-height:1.6}.notice,.error{padding:13px;border:1px solid #e2e7ee;border-radius:9px;background:white;font-size:13px}.error{color:#a32323;border-color:#f4c8c8}
+@media(max-width:1150px){.tanksRow{grid-template-columns:repeat(3,minmax(170px,1fr))}.headerPanel{align-items:stretch;flex-direction:column}.topArea{grid-template-columns:1fr 1fr}}@media(max-width:760px){.topArea{grid-template-columns:1fr}.tanksRow{grid-template-columns:repeat(2,minmax(135px,1fr))}.topSummary strong{font-size:23px}.headerPanel{padding:14px}.filters select{min-width:130px;max-width:100%}.tankCard{padding:12px}.tankPoints{font-size:20px}}
+
+
+/* KIDY - CORES CAIXAS DAGUA */
+
+/* Caixas mensais: verde */
+.tanksRow .tankCard {
+  border-color: #B4DFC5;
+  background: linear-gradient(135deg, #FFFFFF, #F0FAF3);
+}
+
+.tanksRow .tank {
+  border-color: #2D9D62;
+  background: #EAF7EE;
+}
+
+.tanksRow .tankWater {
+  background: linear-gradient(180deg, #57CA8A, #168548);
+}
+
+.tanksRow .tankTicks {
+  color: #278350;
+}
+
+/* Caixa geral: laranja Kidy */
+.tankGeneral {
+  border-color: #F5C28A;
+  background: linear-gradient(135deg, #FFFFFF, #FFF2E4);
+}
+
+.tankGeneral .tank {
+  border-color: #EE800A;
+  background: #FFF2E4;
+}
+
+.tankGeneral .tankWater {
+  background: linear-gradient(180deg, #FFAE41, #ED7800);
+}
+
+.tankGeneral .tankTicks {
+  color: #C56D11;
+}

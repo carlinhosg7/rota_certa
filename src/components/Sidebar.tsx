@@ -53,6 +53,7 @@ export default function Sidebar({ nome, perfil, usuario }: Props) {
   const itens = [
     { titulo: "Visão Comercial", href: "/dashboard#planejamento", rota: "/dashboard" },
     { titulo: "Metas", href: "/metas", rota: "/metas" },
+    { titulo: "Campanha", href: "/campanha", rota: "/campanha" },
     { titulo: "Share", href: "/share", rota: "/share" },
     { titulo: "Gestão de Atendimentos", href: "/gestao-atendimentos", rota: "/gestao-atendimentos" },
     { titulo: "Venda Mais+", href: "/dashboard#venda-mais", rota: "" },

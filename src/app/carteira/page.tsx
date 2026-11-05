@@ -10,6 +10,7 @@ import { redirect } from "next/navigation";
 import Link from "next/link";
 import { validarToken } from "@/lib/auth";
 import Sidebar from "@/components/Sidebar";
+import CartaoTaxaReativacao from "@/components/CartaoTaxaReativacao";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -535,7 +536,13 @@ export default async function CarteiraPage({
                     </div>
                   </div>
                 ))}
+                <div style={{minWidth: 0}}>
+                  <CartaoTaxaReativacao supervisor={supervisorFiltro} representante={representanteFiltro} supervisoresGrupo={gerenteFiltro ? ([...regionaisGerente].join(",") || "SEM_SUPERVISOR") : ""} />
+                </div>
+                <div style={{minWidth: 0}}>
+                </div>
               </div>
+
 
               <section style={{
                 marginTop: 24,

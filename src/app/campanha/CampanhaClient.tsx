@@ -157,7 +157,9 @@ export default function CampanhaClient() {
             <tbody>
               {TIPOS.map(tipo => {
                 const registros = MESES.map(m => ind(m.chave, tipo.chave));
-                const quantidade = tipo.chave === "TREINAMENTOS";
+                const quantidade = tipo.chave === "TREINAMENTOS" || tipo.chave === "REATIVACAO";
+                const unidadeQuantidade = tipo.chave === "REATIVACAO" ? "clientes" : "treinamentos";
+                const tituloRealizado = tipo.chave === "REATIVACAO" ? "Reativados" : "Homologados";
                 const metaValorTotal = registros.reduce((t,i) => t+(i?.metaValor ?? 0),0);
                 const metaParesTotal = registros.reduce((t,i) => t+(i?.metaPares ?? 0),0);
                 const comRealizados = registros.length > 0 && registros.every(i => i && i.realizadoValor !== null && i.realizadoPares !== null);
@@ -173,11 +175,11 @@ export default function CampanhaClient() {
                     return <td key={m.chave}>
                       {!i ? <span className={styles.missing}>{tipo.chave === "TREINAMENTOS" || tipo.chave === "REATIVACAO" ? "Integração pendente" : "Sem meta cadastrada"}</span> :
                         quantidade ? <div className={styles.cell}>
-                          <span className={styles.cellLine}><small>Meta</small><strong>{qtd.format(i.metaPares)} treinamentos</strong></span>
-                          {detalhes && <span className={styles.cellLine}><small>Representantes</small><span>{qtd.format(i.representantes)} × 5</span></span>}
-                          <span className={styles.cellLine}><small>Homologados</small><strong>{i.realizadoPares === null ? "Aguardando" : qtd.format(i.realizadoPares)}</strong></span>
+                          <span className={styles.cellLine}><small>Meta</small><strong>{`${qtd.format(i.metaPares)} ${unidadeQuantidade}`}</strong></span>
+                          {detalhes && <span className={styles.cellLine}><small>Representantes</small><span>{tipo.chave === "REATIVACAO" ? qtd.format(i.representantes) : `${qtd.format(i.representantes)} × 5`}</span></span>}
+                          <span className={styles.cellLine}><small>{tituloRealizado}</small><strong>{i.realizadoPares === null ? "Aguardando" : qtd.format(i.realizadoPares)}</strong></span>
                           {detalhes && <span className={styles.cellLine}><small>Atingimento</small><span>{i.percentualPares === null ? "—" : `${qtd.format(i.percentualPares)}%`}</span></span>}
-                          <span className={styles.cellState}>Pontos da equipe: {qtd.format(i.pontosConcedidos)} / {qtd.format(i.representantes * 30)} · até 30 por representante</span>
+                          <span className={styles.cellState}>{tipo.chave === "REATIVACAO" ? "Reativações detectadas na Carteira 02 → 01 · pontos não homologados" : `Pontos da equipe: ${qtd.format(i.pontosConcedidos)} / ${qtd.format(i.representantes * 30)} · até 30 por representante`}</span>
                         </div> : <div className={styles.cell}>
                           <span className={styles.cellLine}><small>Meta R$</small><strong>{brl.format(i.metaValor)}</strong></span>
                           {detalhes && <span className={styles.cellLine}><small>Meta pares</small><span>{qtd.format(i.metaPares)}</span></span>}
@@ -189,9 +191,9 @@ export default function CampanhaClient() {
                   })}
                   <td className={styles.totalCell}>
                     {registros.every(i => !i) ? <span className={styles.missing}>Pendente</span> : quantidade ? <div className={styles.cell}>
-                      <span className={styles.cellLine}><small>Meta</small><strong>{qtd.format(metaParesTotal)} treinamentos</strong></span>
-                      <span className={styles.cellLine}><small>Homologados</small><strong>{realizadoQtdTotal === null ? "Aguardando" : qtd.format(realizadoQtdTotal)}</strong></span>
-                      <span className={styles.cellState}>Pontos da equipe: {qtd.format(pontosTotal)} / {qtd.format(pontosMaximosEquipe)} · até 150 por representante nos cinco meses</span>
+                      <span className={styles.cellLine}><small>Meta</small><strong>{`${qtd.format(metaParesTotal)} ${unidadeQuantidade}`}</strong></span>
+                      <span className={styles.cellLine}><small>{tituloRealizado}</small><strong>{realizadoQtdTotal === null ? "Aguardando" : qtd.format(realizadoQtdTotal)}</strong></span>
+                      <span className={styles.cellState}>{tipo.chave === "REATIVACAO" ? "Histórico preservado · pontos não homologados" : `Pontos da equipe: ${qtd.format(pontosTotal)} / ${qtd.format(pontosMaximosEquipe)} · até 150 por representante nos cinco meses`}</span>
                     </div> : <div className={styles.cell}>
                       <span className={styles.cellLine}><small>Meta R$</small><strong>{brl.format(metaValorTotal)}</strong></span>
                       {detalhes && <span className={styles.cellLine}><small>Meta pares</small><span>{qtd.format(metaParesTotal)}</span></span>}

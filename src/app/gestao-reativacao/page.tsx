@@ -5,6 +5,7 @@ import { supabase } from "@/lib/supabase";
 import { carregarCarteira2027 } from "@/lib/carteira-2027-data";
 import Sidebar from "@/components/Sidebar";
 import PainelGestaoReativacao from "@/components/PainelGestaoReativacao";
+import CartaoTaxaReativacao from "@/components/CartaoTaxaReativacao";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -121,6 +122,7 @@ export default async function PaginaGestaoReativacao() {
         usuario={texto(sessao.usuario)}
       />
       <main className="content">
+        <CartaoTaxaReativacao supervisor={perfil === "SUPERVISOR" ? sup : ""} representante={perfil === "REPRESENTANTE" ? rep : ""} supervisoresGrupo="" />
         <PainelGestaoReativacao linhas={linhas} perfil={perfil} />
       </main>
     </div>

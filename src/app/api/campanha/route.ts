@@ -4,6 +4,7 @@ import { validarToken } from "@/lib/auth";
 import { supabase } from "@/lib/supabase";
 import { credenciais } from "@/lib/campanha-treinamento-seguro";
 import { representantesPermitidos, regionaisPermitidas } from "@/lib/escopo-acesso";
+import { metasReativacaoPorRepresentante, mesesMetaReativacao } from "@/lib/metas-reativacao-campanha";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -140,6 +141,53 @@ export async function GET(request: NextRequest) {
       pontosConcedidos: pontosTreinamentos,
     });
 
+    // A campanha registra reativacoes detectadas na mudança da Carteira 02 para a 01.
+    // A data é a primeira detecção no novo snapshot, e não comprovação de compra.
+    // Apenas vinculos univocos permitem atribuir o resultado ao representante.
+    const inicioMes = competencia;
+    const fimMes = new Date(`${competencia}T12:00:00Z`);
+    fimMes.setUTCMonth(fimMes.getUTCMonth() + 1);
+    const fimExclusivo = fimMes.toISOString().slice(0, 10);
+    type Reat = {codigo_cliente:string;codigo_representante_responsavel:string|null;codigo_supervisor_responsavel:string|null};
+    const eventos:Reat[]=[];
+    for(let offset=0;offset<20000;offset+=1000){
+      const {data: lote,error: erroReat}=await supabase
+        .from("kidy_reativacao_clientes")
+        .select("codigo_cliente,codigo_representante_responsavel,codigo_supervisor_responsavel")
+        .eq("competencia","2026-10-01").eq("reativado",true)
+        .gte("data_reativacao",inicioMes).lt("data_reativacao",fimExclusivo)
+        .order("codigo_cliente",{ascending:true}).range(offset,offset+999);
+      if(erroReat)throw new Error(`Reativacao: ${erroReat.message}`);
+      eventos.push(...((lote??[]) as Reat[]));
+      if((lote??[]).length<1000)break;
+    }
+    const consultaNacional=permitidos===null && regionais===null && !representante && !supervisor;
+    const aptos=eventos.filter(e=>{
+      if(consultaNacional)return true;
+      const r=cod(e.codigo_representante_responsavel),s=cod(e.codigo_supervisor_responsavel);
+      return Boolean(r) && Boolean(s) &&
+        (permitidos===null||permitidos.includes(r)) &&
+        (regionais===null||regionais.has(s)) &&
+        (!representante||representante===r) && (!supervisor||supervisor===s);
+    });
+    // Metas do arquivo META REATIVICAO: 5 clientes por representante a cada mes.
+    // Escopo obtido da base da campanha ja filtrada por permissoes, sem expor metas alheias.
+    const indiceMes = mesesMetaReativacao.indexOf(competencia as typeof mesesMetaReativacao[number]);
+    const codigosVisiveis = [...new Set(visiveis.map(x => cod(x.codigo_representante)).filter(Boolean))];
+    const codigosComMeta = codigosVisiveis.filter(c => metasReativacaoPorRepresentante[c] !== undefined);
+    const metaReativacao = indiceMes >= 0
+      ? codigosComMeta.reduce((total, c) => total + (metasReativacaoPorRepresentante[c][indiceMes] ?? 0), 0)
+      : 0;
+    indicadores.push({
+      chave:"REATIVACAO",titulo:"Reativação",pontos:30,
+      origem:"REATIVACAO",modalidade:"CLIENTES",
+      representantes:codigosComMeta.length,
+      metaPares:metaReativacao,metaValor:0,realizadoPares:aptos.length,realizadoValor:0,
+      percentualPares:metaReativacao > 0 ? 100 * aptos.length / metaReativacao : null,
+      percentualValor:null,
+      status:"DETECTADO_NAO_HOMOLOGADO",pontosConcedidos:0,
+    });
+
     const opcoes = [...new Map(visiveis.map((i) => [cod(i.codigo_representante), {
       codigo: cod(i.codigo_representante), nome: i.representante_nome || cod(i.codigo_representante),
     }])).values()].sort((a, b) => a.nome.localeCompare(b.nome, "pt-BR"));
@@ -149,7 +197,7 @@ export async function GET(request: NextRequest) {
       campanha: CAMPANHA, competencia,
       filtros: { supervisor, representante, supervisores, representantes: opcoes },
       indicadores,
-      pendentes: ["REATIVACAO"],
+      pendentes: indicadores.some(i => i.chave === "REATIVACAO") ? [] : ["REATIVACAO"],
       pontuacao: { concedida: 0, disponivel: false, motivo: "Realizados e regras de premiacao ainda nao homologados" },
       avisos: ["Metas extraidas do historico oficial do Supabase.", "Sem dados nao significa zero vendas.", "Pontuacao bloqueada ate homologacao e fechamento."],
     });

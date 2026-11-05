@@ -80,20 +80,29 @@ function supervisoresDaFonte(
     return null;
   }
 
-  const trecho = filtros.match(
-    /Codigo Supervisor:\s*([^;|]+)/i
-  );
+  // O cabecalho pode conter filtros de inclusao e exclusao.
+  // Ex.: "Codigo Supervisor: 9900, 9901 (Exceto); Codigo Supervisor: 9902, 9907".
+  // Nao tratar a primeira ocorrencia, marcada (Exceto), como lista permitida.
+  const ocorrencias = [...filtros.matchAll(/Codigo Supervisor:\s*([^;|]+)/gi)];
+  const incluir = new Set<string>();
+  const excluir = new Set<string>();
 
-  if (!trecho) return null;
+  for (const ocorrencia of ocorrencias) {
+    const trecho = ocorrencia[1];
+    const destino = /\(\s*Exceto\s*\)/i.test(trecho) ? excluir : incluir;
 
-  const valores = trecho[1]
-    .split(",")
-    .map(codigo)
-    .filter((valor) => /^\d+$/.test(valor));
+    for (const valor of trecho.match(/\b\d+\b/g) ?? []) {
+      destino.add(codigo(valor));
+    }
+  }
 
-  return valores.length ? new Set(valores) : null;
+  // Sem lista explicita de inclusao, manter o comportamento de nao
+  // restringir por supervisor em vez de eliminar todos os representantes.
+  if (incluir.size === 0) return null;
+
+  for (const valor of excluir) incluir.delete(valor);
+  return incluir.size ? incluir : null;
 }
-
 function normalizarMeta(
   item: RegistroMeta,
   mapa: MapaRepresentantes

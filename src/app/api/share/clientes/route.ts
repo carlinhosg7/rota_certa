@@ -1,4 +1,5 @@
 import { podeAcessarShare, ehAdminShare, pertenceRepresentanteShare } from "@/lib/share-acesso";
+import { obterEscopoShare, podeConsultarShare, representanteNoEscopo } from "@/lib/share-escopo";
 import { cookies } from "next/headers";
 import { validarToken } from "@/lib/auth";
 import { NextRequest, NextResponse } from "next/server";
@@ -37,27 +38,50 @@ export async function GET(req: NextRequest) {
     );
   }
 
-  if (!podeAcessarShare(usuario)) {
+  const escopo = await obterEscopoShare(usuario);
+
+  if (!podeConsultarShare(escopo)) {
     return NextResponse.json(
       { erro: "Sem permissao" }, { status: 403 }
     );
   }
 
   try {
+    const representanteSelecionado = String(
+      req.nextUrl.searchParams.get("representante") ?? ""
+    ).trim().replace(/\.0+$/, "");
+
+    if (
+      representanteSelecionado &&
+      !representanteNoEscopo(escopo, representanteSelecionado)
+    ) {
+      return NextResponse.json(
+        { erro: "Representante nao autorizado" },
+        { status: 403 }
+      );
+    }
+
+    const clienteDoRepresentante = (codigo: unknown): boolean => {
+      const rep = String(codigo ?? "").trim().replace(/\.0+$/, "");
+
+      return representanteNoEscopo(escopo, rep) &&
+        (!representanteSelecionado || rep === representanteSelecionado);
+    };
+
     if (req.nextUrl.searchParams.get("modo") === "contagem") {
       const indice = await lerJSONShare<{cidades: Record<string,{total:number;representantes:Record<string,number>}>}>("share-acesso-indice.json");
       const contagens:Record<string,number> = {};
       for (const [ibge, entrada] of Object.entries(indice.cidades)) {
-        const quantidade = ehAdminShare(usuario) ? entrada.total :
-          Object.entries(entrada.representantes).reduce((n,[rep,q]) => n + (pertenceRepresentanteShare(usuario,rep) ? q : 0),0);
-        if (quantidade > 0 || ehAdminShare(usuario)) contagens[ibge]=quantidade;
+        const quantidade = escopo.nacional && !representanteSelecionado ? entrada.total :
+          Object.entries(entrada.representantes).reduce((n,[rep,q]) => n + (clienteDoRepresentante(rep) ? q : 0),0);
+        if (quantidade > 0 || escopo.nacional) contagens[ibge]=quantidade;
       }
       return NextResponse.json({contagens});
     }
 
     const dados = await lerJSONShare<Base>("share-clientes.json");
-    const basePermitida: Base = ehAdminShare(usuario) ? dados : Object.fromEntries(
-      Object.entries(dados).map(([ibge, clientes]) => [ibge, clientes.filter(c => pertenceRepresentanteShare(usuario, c.codigo_representante))])
+    const basePermitida: Base = escopo.nacional && !representanteSelecionado ? dados : Object.fromEntries(
+      Object.entries(dados).map(([ibge, clientes]) => [ibge, clientes.filter(c => clienteDoRepresentante(c.codigo_representante))])
         .filter(([, clientes]) => clientes.length > 0)
     );
 

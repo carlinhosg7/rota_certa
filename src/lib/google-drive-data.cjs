@@ -3,6 +3,8 @@ const path = require("path");
 const crypto = require("crypto");
 
 const NOMES_OFICIAIS = [
+  "CAMPANHA AMOSTRA - ENTRADA.xlsx",
+  "CAMPANHA AMOSTRA - FATURAMENTO.xlsx",
   "DADOS PREDITIVA CLIENTES.xlsx",
   "DADOS_PREDITIVA_1.parquet",
   "DADOS_PREDITIVA_2.parquet",
@@ -29,6 +31,7 @@ const NOMES_OFICIAIS = [
   "INDICADORES COMERCIAIS POR  FATURAMENTO.xlsx",
   "share-municipios.json",
   "share-vendas-anuais.json",
+  "share-vendas-representantes.json",
   "share-clientes.json",
   "share-potencial-clientes.json",
   "share-acesso-indice.json",

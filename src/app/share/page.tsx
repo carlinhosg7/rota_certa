@@ -3,6 +3,7 @@ import { redirect } from "next/navigation";
 import { validarToken } from "@/lib/auth";
 import Sidebar from "@/components/Sidebar";
 import ShareClient from "./ShareClient";
+import { obterEscopoShare, podeConsultarShare } from "@/lib/share-escopo";
 
 export const dynamic = "force-dynamic";
 
@@ -22,7 +23,9 @@ export default async function SharePage() {
 
   const perfil = String(usuario.perfil || "").toUpperCase();
 
-  if (!["ADMIN", "REPRESENTANTE", "REP"].includes(perfil) || (perfil !== "ADMIN" && !String(usuario.codigo_representante ?? "").trim())) {
+  const escopo = await obterEscopoShare(usuario);
+
+  if (!podeConsultarShare(escopo)) {
     redirect("/dashboard");
   }
 

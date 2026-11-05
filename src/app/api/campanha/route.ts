@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { cookies } from "next/headers";
 import { validarToken } from "@/lib/auth";
 import { supabase } from "@/lib/supabase";
+import { credenciais } from "@/lib/campanha-treinamento-seguro";
 import { representantesPermitidos, regionaisPermitidas } from "@/lib/escopo-acesso";
 
 export const runtime = "nodejs";
@@ -101,6 +102,44 @@ export async function GET(request: NextRequest) {
       };
     });
 
+    // Pontos de treinamento: apenas registros oficiais homologados, sem testes.
+    // A pontuacao global da campanha continua bloqueada ate as outras categorias estarem homologadas.
+    const {base: hBase, headers: hHeaders} = credenciais();
+    const hUrl = new URL(`${hBase}/rest/v1/kidy_campanha_treinamentos_homologacao`);
+    hUrl.searchParams.set("select", "treinamento_id,kidy_campanha_treinamentos!inner(campanha,competencia,codigo_representante,codigo_supervisor_snapshot,status)");
+    hUrl.searchParams.set("kidy_campanha_treinamentos.campanha", `eq.${CAMPANHA}`);
+    hUrl.searchParams.set("kidy_campanha_treinamentos.competencia", `eq.${competencia}`);
+    hUrl.searchParams.set("limit", "1000");
+    const hRes = await fetch(hUrl, {headers:hHeaders,cache:'no-store'});
+    if(!hRes.ok) throw new Error(`Consulta homologacoes: ${hRes.status}. Execute o SQL 01_homologacao.sql.`);
+    const homs = await hRes.json() as unknown[];
+    if (homs.length === 1000) throw new Error("Limite de homologacoes atingido; implementar paginacao.");
+    const contagemPorRep = new Map<string, number>();
+    for (const row of homs as Array<{kidy_campanha_treinamentos: {
+      campanha:string; competencia:string; codigo_representante:string; codigo_supervisor_snapshot:string|null; status:string
+    }}>) {
+      const t = row.kidy_campanha_treinamentos;
+      if (!t || t.status !== "APROVADO") continue;
+      const rep = cod(t.codigo_representante);
+      if (permitidos !== null && !permitidos.includes(rep)) continue;
+      if (representante && rep !== representante) continue;
+      if (supervisor && cod(t.codigo_supervisor_snapshot) !== supervisor) continue;
+      if (regionais !== null && !regionais.has(cod(t.codigo_supervisor_snapshot))) continue;
+      contagemPorRep.set(rep, (contagemPorRep.get(rep) ?? 0) + 1);
+    }
+    const treinamentosValidos = [...contagemPorRep.values()].reduce((total, n) => total + Math.min(n, 5), 0);
+    const pontosTreinamentos = treinamentosValidos * 6;
+    const qtdRepresentantes = new Set(visiveis.map(r => cod(r.codigo_representante))).size;
+    indicadores.push({
+      chave: "TREINAMENTOS", titulo: "Treinamentos", pontos: 30,
+      origem: "TREINAMENTOS", modalidade: "QUANTIDADE", representantes: qtdRepresentantes,
+      metaPares: 5 * qtdRepresentantes, metaValor: 0,
+      realizadoPares: treinamentosValidos, realizadoValor: 0,
+      percentualPares: qtdRepresentantes ? 100 * treinamentosValidos / (5 * qtdRepresentantes) : null,
+      percentualValor: null, status: "HOMOLOGADO_PARCIAL",
+      pontosConcedidos: pontosTreinamentos,
+    });
+
     const opcoes = [...new Map(visiveis.map((i) => [cod(i.codigo_representante), {
       codigo: cod(i.codigo_representante), nome: i.representante_nome || cod(i.codigo_representante),
     }])).values()].sort((a, b) => a.nome.localeCompare(b.nome, "pt-BR"));
@@ -110,7 +149,7 @@ export async function GET(request: NextRequest) {
       campanha: CAMPANHA, competencia,
       filtros: { supervisor, representante, supervisores, representantes: opcoes },
       indicadores,
-      pendentes: ["TREINAMENTOS", "REATIVACAO"],
+      pendentes: ["REATIVACAO"],
       pontuacao: { concedida: 0, disponivel: false, motivo: "Realizados e regras de premiacao ainda nao homologados" },
       avisos: ["Metas extraidas do historico oficial do Supabase.", "Sem dados nao significa zero vendas.", "Pontuacao bloqueada ate homologacao e fechamento."],
     });

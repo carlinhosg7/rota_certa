@@ -2,6 +2,7 @@
 
 import { useCallback, useEffect, useState } from "react";
 import Link from "next/link";
+import GestaoReativacao from "./GestaoReativacao";
 
 type TipoAlerta = "ATRASADA" | "HOJE" | "AMANHA";
 
@@ -56,6 +57,24 @@ function corTipo(tipo: TipoAlerta) {
 }
 
 export default function AlertasReativacao() {
+
+  // CENTRAL_SUBTELA_REATIVACAO: mesmo formulario do Cliente 360.
+  const [clienteGestao, setClienteGestao] = useState<string | null>(null);
+type ClienteCarteiraItem = {
+    codigoCliente: string;
+    razaoSocial: string;
+    representante: string;
+    supervisor: string;
+    ultimaCompra: string | null;
+    diasSemCompra: number | null;
+    situacao: string;
+  };
+  const [carteiraItens, setCarteiraItens] = useState<ClienteCarteiraItem[]>([]);
+  const [carteiraTotal, setCarteiraTotal] = useState(0);
+  const [carteiraPagina, setCarteiraPagina] = useState(1);
+  const [carteiraBusca, setCarteiraBusca] = useState("");
+  const [carteiraCarregando, setCarteiraCarregando] = useState(false);
+  const [carteiraErro, setCarteiraErro] = useState("");
   const [aberto, setAberto] = useState(false);
   const [alertas, setAlertas] = useState<Alerta[]>([]);
   const [resumo, setResumo] = useState<Resumo>(resumoVazio);
@@ -97,6 +116,30 @@ export default function AlertasReativacao() {
     }
   }, []);
 
+  const carregarCarteira = useCallback(async (pagina: number, busca: string) => {
+    setCarteiraCarregando(true);
+    setCarteiraErro("");
+    try {
+      const parametros = new URLSearchParams({
+        pagina: String(pagina), busca
+      });
+      const resposta = await fetch(`/api/alertas-reativacao/carteira?${parametros}`, {
+        credentials: "same-origin", cache: "no-store"
+      });
+      const dados = await resposta.json();
+      if (!resposta.ok || !dados.sucesso) {
+        throw new Error(dados.erro || "Falha ao consultar carteira de reativação.");
+      }
+      setCarteiraItens(dados.clientes ?? []);
+      setCarteiraTotal(dados.total ?? 0);
+      setCarteiraPagina(dados.pagina ?? pagina);
+    } catch (e) {
+      setCarteiraErro(e instanceof Error ? e.message : "Erro ao buscar carteira.");
+    } finally {
+      setCarteiraCarregando(false);
+    }
+  }, []);
+
   useEffect(() => {
     let ativo = true;
 
@@ -129,6 +172,11 @@ export default function AlertasReativacao() {
       window.removeEventListener("focus", aoFocar);
     };
   }, [atualizar]);
+
+  useEffect(() => {
+    if (!aberto || filtro !== "TODOS") return;
+    void carregarCarteira(1, carteiraBusca);
+  }, [aberto, filtro, carregarCarteira]);
 
   const filtrados =
     filtro === "TODOS"
@@ -219,7 +267,7 @@ export default function AlertasReativacao() {
                   Central de Reativação
                 </h2>
                 <p style={{ color: "#64748b", margin: "6px 0 0" }}>
-                  Acompanhamento das ações comerciais pendentes
+                  Carteira completa de reativação e acompanhamento das ações comerciais
                 </p>
               </div>
 
@@ -280,7 +328,7 @@ export default function AlertasReativacao() {
             >
               {(
                 [
-                  ["TODOS", "Todos"],
+                  ["TODOS", "Toda carteira"],
                   ["ATRASADA", "Atrasadas"],
                   ["HOJE", "Hoje"],
                   ["AMANHA", "Amanhã"]
@@ -306,7 +354,7 @@ export default function AlertasReativacao() {
 
               <button
                 type="button"
-                onClick={() => void atualizar()}
+                onClick={() => { void atualizar(); if (filtro === "TODOS") void carregarCarteira(carteiraPagina, carteiraBusca); }}
                 style={{
                   marginLeft: "auto",
                   border: "1px solid #cbd5e1",
@@ -328,6 +376,63 @@ export default function AlertasReativacao() {
 
             {carregando && <p>Carregando notificações...</p>}
 
+            {filtro === "TODOS" && (
+              <div style={{display:"grid", gap:12}}>
+                <form onSubmit={e => {e.preventDefault(); void carregarCarteira(1, carteiraBusca);}}
+                      style={{display:"flex",gap:8,flexWrap:"wrap"}}>
+                  <input
+                    aria-label="Buscar cliente da carteira de reativação"
+                    value={carteiraBusca}
+                    onChange={e => setCarteiraBusca(e.target.value)}
+                    placeholder="Código ou razão social do cliente"
+                    style={{flex:"1 1 220px",minWidth:0,padding:10,borderRadius:8,border:"1px solid #cbd5e1"}}
+                  />
+                  <button type="submit" style={{padding:"10px 15px",borderRadius:8,background:"#f97316",color:"white",border:0,cursor:"pointer"}}>Buscar</button>
+                </form>
+                <p style={{fontSize:13,color:"#475569",margin:0}}>
+                  <strong>{carteiraTotal.toLocaleString("pt-BR")}</strong> clientes na carteira de reativação permitida para seu perfil
+                </p>
+                {carteiraErro && <p role="alert" style={{color:"#b91c1c"}}>{carteiraErro}</p>}
+                {carteiraCarregando && <p>Carregando carteira de reativação...</p>}
+                {!carteiraCarregando && carteiraItens.length === 0 && <p>Nenhum cliente encontrado nesta pesquisa.</p>}
+                {!carteiraCarregando && carteiraItens.map(c => (
+                  <div key={c.codigoCliente} style={{border:"1px solid #fed7aa",padding:14,borderRadius:12,background:"#fffaf5"}}>
+                    <div style={{display:"flex",justifyContent:"space-between",gap:10,flexWrap:"wrap"}}>
+                      <strong>{c.codigoCliente} — {c.razaoSocial || "Razão social não informada"}</strong>
+                      <strong style={{color:"#9a3412"}}>{c.diasSemCompra === null ? "Sem histórico de compra" : `${c.diasSemCompra.toLocaleString("pt-BR")} dias sem compra`}</strong>
+                    </div>
+                    <p style={{fontSize:12,color:"#64748b"}}>
+                      Última compra: {c.ultimaCompra ? formatarData(c.ultimaCompra) : "Não informada"} · Representante: {c.representante || "-"} · Supervisor: {c.supervisor || "-"}
+                    </p>
+                    <Link href={`/cliente/${encodeURIComponent(c.codigoCliente)}`}
+                          style={{display:"inline-block",padding:"8px 12px",borderRadius:8,color:"white",background:"#f97316",textDecoration:"none",fontWeight:700,fontSize:13}}>
+                      Abrir Cliente 360º
+                    </Link>
+                  <button
+                    type="button"
+                    onClick={() => setClienteGestao(c.codigoCliente)}
+                    style={{display:"inline-flex",alignItems:"center",marginLeft:8,padding:"8px 12px",
+                            borderRadius:8,border:0,background:"#166534",color:"#fff",
+                            fontWeight:700,fontSize:13,cursor:"pointer"}}
+                  >
+                    Gerenciar Reativação
+                  </button>
+                  </div>
+                ))}
+                {carteiraTotal > 100 && (
+                  <div style={{display:"flex",alignItems:"center",gap:12,justifyContent:"center",padding:8}}>
+                    <button type="button" disabled={carteiraPagina <= 1 || carteiraCarregando}
+                      onClick={() => void carregarCarteira(carteiraPagina - 1, carteiraBusca)}>Anterior</button>
+                    <span>Página {carteiraPagina} de {Math.ceil(carteiraTotal / 100)}</span>
+                    <button type="button" disabled={carteiraPagina * 100 >= carteiraTotal || carteiraCarregando}
+                      onClick={() => void carregarCarteira(carteiraPagina + 1, carteiraBusca)}>Próxima</button>
+                  </div>
+                )}
+              </div>
+            )}
+
+            {filtro !== "TODOS" && (
+              <>
             {!carregando && filtrados.length === 0 && (
               <p style={{ padding: 20, color: "#64748b" }}>
                 Nenhuma ação pendente neste filtro.
@@ -411,12 +516,89 @@ export default function AlertasReativacao() {
                   >
                     Abrir Cliente 360º
                   </Link>
+                  <button
+                    type="button"
+                    onClick={() => setClienteGestao(a.codigoCliente)}
+                    style={{display:"inline-flex",alignItems:"center",marginLeft:8,padding:"8px 12px",
+                            borderRadius:8,border:0,background:"#166534",color:"#fff",
+                            fontWeight:700,fontSize:13,cursor:"pointer"}}
+                  >
+                    Gerenciar Reativação
+                  </button>
                 </div>
               ))}
             </div>
+              </>
+            )}
           </div>
         </div>
       )}
+
+      {/* CENTRAL_SUBTELA_REATIVACAO: janela de edicao sobre a Central. */}
+      {clienteGestao && (
+        <div
+          role="presentation"
+          onClick={() => { setClienteGestao(null); void atualizar(); }}
+          style={{
+            position: "fixed",
+            inset: 0,
+            zIndex: 2100,
+            background: "rgba(15,23,42,0.65)",
+            padding: "3vh 12px",
+            display: "flex",
+            justifyContent: "center",
+            alignItems: "flex-start",
+            overflowY: "auto",
+          }}
+        >
+          <div
+            role="dialog"
+            aria-modal="true"
+            aria-label={`Gestão de Reativação do cliente ${clienteGestao}`}
+            onClick={e => e.stopPropagation()}
+            style={{
+              width: "100%",
+              maxWidth: 1080,
+              maxHeight: "94vh",
+              overflowY: "auto",
+              borderRadius: 16,
+              background: "#fff",
+              padding: 20,
+              boxShadow: "0 24px 72px rgba(0,0,0,0.25)",
+            }}
+          >
+            <div style={{
+              display: "flex",
+              gap: 12,
+              justifyContent: "space-between",
+              alignItems: "center",
+              marginBottom: 14,
+              flexWrap: "wrap",
+            }}>
+              <strong style={{fontSize: 16}}>
+                Cliente {clienteGestao} — Gestão de Reativação
+              </strong>
+              <button
+                type="button"
+                onClick={() => { setClienteGestao(null); void atualizar(); }}
+                style={{
+                  background: "#f97316",
+                  color: "#fff",
+                  border: 0,
+                  borderRadius: 9,
+                  padding: "10px 16px",
+                  cursor: "pointer",
+                  fontWeight: 700,
+                }}
+              >
+                Fechar e voltar à Central
+              </button>
+            </div>
+            <GestaoReativacao codigoCliente={clienteGestao} razaoSocial="" cnpj="" />
+          </div>
+        </div>
+      )}
+
     </div>
   );
 }

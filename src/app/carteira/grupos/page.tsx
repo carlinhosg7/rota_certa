@@ -9,8 +9,10 @@ import { cookies } from "next/headers";
 import { redirect } from "next/navigation";
 import { validarToken } from "@/lib/auth";
 import { acessoGlobal, regionaisPermitidas, representantesPermitidos } from "@/lib/escopo-acesso";
-import { getData, cleanCode } from "@/lib/comercial-data";
+import { cleanCode } from "@/lib/comercial-data";
+import { buscarVendasClientes360 } from "@/lib/visao360-supabase";
 import Sidebar from "@/components/Sidebar";
+import AnaliseComercialGrupo360 from "@/components/AnaliseComercialGrupo360";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -242,6 +244,7 @@ export default async function VisaoGrupos({ searchParams }: Props) {
   if (!usuarioAutenticado) redirect("/");
 
   const perfil = texto(usuarioAutenticado.perfil).toUpperCase();
+  const podeVerReceita = perfil !== "REPRESENTANTE" && perfil !== "REP";
   const usuario = texto(usuarioAutenticado.usuario);
   const nome = texto(usuarioAutenticado.nome) || usuario;
   const repLogin = codigo(
@@ -400,7 +403,7 @@ export default async function VisaoGrupos({ searchParams }: Props) {
   const supervisorFiltro = codigo(params.supervisor);
   const representanteFiltro = codigo(params.representante);
   const situacoesReceita = ["ATIVA", "BAIXADA", "INAPTA", "SUSPENSA", "NAO LOCALIZADO", "PENDENTE FORMATO", "NAO VERIFICADA"];
-  const receita = situacoesReceita.includes(texto(params.receita).toUpperCase()) ? texto(params.receita).toUpperCase() : "";
+  const receita = podeVerReceita && situacoesReceita.includes(texto(params.receita).toUpperCase()) ? texto(params.receita).toUpperCase() : "";
 
 
   // Opcoes respeitam a carteira permitida ao usuario autenticado.
@@ -454,6 +457,19 @@ export default async function VisaoGrupos({ searchParams }: Props) {
     }
   }
 
+  // A consulta cadastral BAIXADA continua disponivel somente no painel fiscal.
+  // Para as carteiras comerciais, nenhum estabelecimento com Receita BAIXADA conta.
+  if (!receita || receita !== "BAIXADA") {
+    for (const g of gruposPainel) {
+      g.clientes = g.clientes.filter(c =>
+        String(c.situacaoEmpresa || "").replaceAll("_", " ").toUpperCase() !== "BAIXADA"
+      );
+    }
+    for (let i = gruposPainel.length - 1; i >= 0; i--) {
+      if (!gruposPainel[i].clientes.length) gruposPainel.splice(i, 1);
+    }
+  }
+
   const totalGruposPainel = gruposPainel.length;
 
   const gruposAtivos = gruposPainel.filter(
@@ -476,6 +492,13 @@ export default async function VisaoGrupos({ searchParams }: Props) {
     g => g.clientes.some(c => Number(c.limiteDisponivel) > 0)
   ).length;
 
+  const gruposAtivosLista = gruposPainel.filter(g => situacaoGrupo(g) === "ATIVA");
+  const gruposReativacaoLista = gruposPainel.filter(g => situacaoGrupo(g) === "REATIVACAO");
+  const ativosBloqueados = gruposAtivosLista.filter(g => g.clientes.some(c => c.bloqueadoFinanceiro)).length;
+  const ativosComLimite = gruposAtivosLista.filter(g => g.clientes.some(c => Number(c.limiteDisponivel) > 0)).length;
+  const reativacaoBloqueados = gruposReativacaoLista.filter(g => g.clientes.some(c => c.bloqueadoFinanceiro)).length;
+  const reativacaoComLimite = gruposReativacaoLista.filter(g => g.clientes.some(c => Number(c.limiteDisponivel) > 0)).length;
+
   const grupos25a36 = gruposPainel.filter(
     g => situacaoGrupo(g) === "REATIVACAO" && faixaGrupo(g) === "25_36"
   ).length;
@@ -493,8 +516,9 @@ export default async function VisaoGrupos({ searchParams }: Props) {
       ? (valor / totalGruposPainel * 100).toFixed(1).replace(".", ",") + "%"
       : "0,0%";
   const filtrosPermitidos = new Set([
-    "todos", "ativa", "reativacao", "pendente",
-    "bloqueio", "limite", "25_36", "37_60", "acima_60"
+    "todos", "ativa", "reativacao", "bloqueio", "limite",
+    "ativa_bloqueio", "ativa_limite", "reativacao_bloqueio", "reativacao_limite",
+    "25_36", "37_60", "acima_60"
   ]);
 
   const filtroSolicitado = texto(params.filtro);
@@ -508,6 +532,14 @@ export default async function VisaoGrupos({ searchParams }: Props) {
         return situacaoGrupo(g) === "ATIVA";
       case "reativacao":
         return situacaoGrupo(g) === "REATIVACAO";
+      case "ativa_bloqueio":
+        return situacaoGrupo(g) === "ATIVA" && g.clientes.some(c => c.bloqueadoFinanceiro);
+      case "ativa_limite":
+        return situacaoGrupo(g) === "ATIVA" && g.clientes.some(c => Number(c.limiteDisponivel) > 0);
+      case "reativacao_bloqueio":
+        return situacaoGrupo(g) === "REATIVACAO" && g.clientes.some(c => c.bloqueadoFinanceiro);
+      case "reativacao_limite":
+        return situacaoGrupo(g) === "REATIVACAO" && g.clientes.some(c => Number(c.limiteDisponivel) > 0);
       case "pendente":
         return situacaoGrupo(g) === "PENDENTE";
       case "bloqueio":
@@ -543,6 +575,10 @@ export default async function VisaoGrupos({ searchParams }: Props) {
     todos: "Todos os grupos",
     ativa: "Grupos ativos",
     reativacao: "Grupos em reativação",
+    ativa_bloqueio: "Grupos ativos com bloqueio financeiro",
+    ativa_limite: "Grupos ativos com limite disponível",
+    reativacao_bloqueio: "Grupos em reativação com bloqueio financeiro",
+    reativacao_limite: "Grupos em reativação com limite disponível",
     pendente: "Grupos pendentes de qualificação",
     bloqueio: "Grupos com bloqueio financeiro",
     limite: "Grupos com limite disponível",
@@ -555,7 +591,7 @@ export default async function VisaoGrupos({ searchParams }: Props) {
     : gruposPainel.filter(correspondeFiltro);
 
   const grupoAtual = grupoSelecionado
-    ? mapa.get(grupoSelecionado)
+    ? gruposPainel.find(g => g.chave === grupoSelecionado)
     : undefined;
 
   const totalAgrupados = grupos.reduce(
@@ -590,6 +626,7 @@ export default async function VisaoGrupos({ searchParams }: Props) {
   let vendasGrupo: {
     codigo: string;
     data: Date | null;
+    dataEntrega?: Date | null;
     qtd: number;
     vlr: number;
     codigoLinha: string;
@@ -603,13 +640,17 @@ export default async function VisaoGrupos({ searchParams }: Props) {
       grupoAtual.clientes.map(c => cleanCode(codigo(c.codigoCliente)))
     );
 
-    const dados = await getData();
+    // Consulta somente as empresas do grupo no Supabase.
+    // Evita carregar os seis arquivos Parquet do Drive ao abrir a Visao 360.
+    const vendasPorCliente = await buscarVendasClientes360([...codigos]);
 
-    vendasGrupo = dados.vendas
+    vendasGrupo = [...vendasPorCliente.values()]
+      .flat()
       .filter(v => codigos.has(cleanCode(v.codigo)))
       .map(v => ({
         codigo: cleanCode(v.codigo),
         data: v.data,
+        dataEntrega: v.dataEntrega ?? null,
         qtd: Number(v.qtd) || 0,
         vlr: Number(v.vlr) || 0,
         codigoLinha: texto(v.codigoLinha),
@@ -889,13 +930,13 @@ export default async function VisaoGrupos({ searchParams }: Props) {
         </select>
       </label>
 
-       <label style={{flex: "1 1 180px", fontSize: 12}}>
+       {podeVerReceita && (<label style={{flex: "1 1 180px", fontSize: 12}}>
          Situação Receita Federal
          <select name="receita" defaultValue={receita} style={{display: "block", width: "100%", padding: 11, marginTop: 6}}>
            <option value="">Todas</option>
            {situacoesReceita.map(st => <option key={st} value={st}>{st}</option>)}
          </select>
-       </label>
+       </label>)}
 
       <button type="submit" style={{
         padding: "12px 18px", background: "#f28c00",
@@ -908,7 +949,7 @@ export default async function VisaoGrupos({ searchParams }: Props) {
     </form>
   </section>
 
-   <section style={painel}>
+   {podeVerReceita && (<section style={painel}>
      <h2 style={{margin: "0 0 8px", fontSize: 18}}>Situação cadastral — Receita Federal</h2>
      <p style={{fontSize: 12, marginBottom: 14}}>Grupos distintos por Grupo Cliente; classificação cadastral independente da carteira comercial.</p>
      <div style={{display: "grid", gridTemplateColumns: "repeat(auto-fit,minmax(140px,1fr))", gap: 10}}>
@@ -927,39 +968,27 @@ export default async function VisaoGrupos({ searchParams }: Props) {
      <p style={{marginTop: 12, color: cores.vermelho, fontWeight: 800, fontSize: 12}}>
        Atenção: {numero(riscoReceita)} clientes com CNPJ baixado ou inapto e limite disponível.
      </p>
-   </section>
+   </section>)}
 
-  <div style={{
-    display: "grid",
-    gridTemplateColumns: "repeat(auto-fit,minmax(155px,1fr))",
-    gap: 12,
-    marginBottom: 18
-  }}>
-    <Link href={linkFiltro("todos")} style={{ textDecoration: "none", color: "inherit", display: "block" }}>
-<Cartao titulo="Grupos na carteira"
-      valor={numero(totalGruposPainel)} detalhe="Grupo Cliente distinto" />
-</Link>
-    <Link href={linkFiltro("ativa")} style={{ textDecoration: "none", color: "inherit", display: "block" }}>
-<Cartao titulo="Carteira 01 — Ativa"
-      valor={numero(gruposAtivos)} detalhe={pctGrupo(gruposAtivos)} />
-</Link>
-    <Link href={linkFiltro("reativacao")} style={{ textDecoration: "none", color: "inherit", display: "block" }}>
-<Cartao titulo="Carteira 02 — Reativação"
-      valor={numero(gruposReativacao)} detalhe={pctGrupo(gruposReativacao)} />
-</Link>
-    <Link href={linkFiltro("pendente")} style={{ textDecoration: "none", color: "inherit", display: "block" }}>
-<Cartao titulo="Pendentes de qualificação"
-      valor={numero(gruposPendentes)} detalhe="Sem última compra válida" />
-</Link>
-    <Link href={linkFiltro("bloqueio")} style={{ textDecoration: "none", color: "inherit", display: "block" }}>
-<Cartao titulo="Bloqueio financeiro"
-      valor={numero(gruposBloqueados)} detalhe="Grupos com bloqueio" />
-</Link>
-    <Link href={linkFiltro("limite")} style={{ textDecoration: "none", color: "inherit", display: "block" }}>
-<Cartao titulo="Com limite disponível"
-      valor={numero(gruposComLimite)} detalhe="Grupos com limite positivo" />
-</Link>
-  </div>
+   <div style={{display: "grid", gridTemplateColumns: "repeat(auto-fit,minmax(240px,1fr))", gap: 14, marginBottom: 18, alignItems: "start"}}>
+     <Link href={linkFiltro("todos")} style={{textDecoration: "none", color: "inherit", alignSelf: "start"}}>
+       <Cartao titulo="Grupos na carteira" valor={numero(totalGruposPainel)} detalhe="Grupo Cliente distinto" />
+     </Link>
+     <div style={{display: "grid", gap: 10, alignContent: "start"}}>
+       <Link href={linkFiltro("ativa")} style={{textDecoration: "none", color: "inherit"}}><Cartao titulo="Carteira 01 — Ativa" valor={numero(gruposAtivos)} detalhe={pctGrupo(gruposAtivos)} /></Link>
+       <div style={{display: "grid", gridTemplateColumns: "repeat(2,minmax(0,1fr))", gap: 10}}>
+         <Link href={linkFiltro("ativa_bloqueio")} style={{textDecoration: "none", color: "inherit"}}><Cartao titulo="Bloqueio financeiro" valor={numero(ativosBloqueados)} detalhe="Carteira 01" /></Link>
+         <Link href={linkFiltro("ativa_limite")} style={{textDecoration: "none", color: "inherit"}}><Cartao titulo="Com limite disponível" valor={numero(ativosComLimite)} detalhe="Carteira 01" /></Link>
+       </div>
+     </div>
+     <div style={{display: "grid", gap: 10, alignContent: "start"}}>
+       <Link href={linkFiltro("reativacao")} style={{textDecoration: "none", color: "inherit"}}><Cartao titulo="Carteira 02 — Reativação" valor={numero(gruposReativacao)} detalhe={pctGrupo(gruposReativacao)} /></Link>
+       <div style={{display: "grid", gridTemplateColumns: "repeat(2,minmax(0,1fr))", gap: 10}}>
+         <Link href={linkFiltro("reativacao_bloqueio")} style={{textDecoration: "none", color: "inherit"}}><Cartao titulo="Bloqueio financeiro" valor={numero(reativacaoBloqueados)} detalhe="Carteira 02" /></Link>
+         <Link href={linkFiltro("reativacao_limite")} style={{textDecoration: "none", color: "inherit"}}><Cartao titulo="Com limite disponível" valor={numero(reativacaoComLimite)} detalhe="Carteira 02" /></Link>
+       </div>
+     </div>
+   </div>
 
   <section style={painel}>
     <h2 style={{ margin: "0 0 8px", fontSize: 18 }}>
@@ -981,16 +1010,12 @@ export default async function VisaoGrupos({ searchParams }: Props) {
         width: pctGrupo(gruposReativacao).replace(",", "."),
         background: "#f59e0b"
       }} />
-      <div style={{
-        width: pctGrupo(gruposPendentes).replace(",", "."),
-        background: "#8b5cf6"
-      }} />
-    </div>
+
+</div>
 
     <p style={{ fontSize: 12, marginTop: 12 }}>
       Ativa: {numero(gruposAtivos)} ({pctGrupo(gruposAtivos)})
       {" · "}Reativação: {numero(gruposReativacao)} ({pctGrupo(gruposReativacao)})
-      {" · "}Pendente: {numero(gruposPendentes)}
     </p>
   </section>
 
@@ -1285,34 +1310,9 @@ export default async function VisaoGrupos({ searchParams }: Props) {
 </Link>
               </div>
 
-              <section style={painel}>
-                <TituloSecao
-                  numeroSecao="01"
-                  titulo="Histórico comercial consolidado"
-                />
-
-                <div style={{
-                  display: "grid",
-                  gridTemplateColumns: "repeat(auto-fit,minmax(180px,1fr))",
-                  gap: 12,
-                }}>
-                  <Cartao titulo="Pares no ano" valor={numero(paresAno)} />
-                  <Cartao titulo="Valor no ano" valor={moeda(valorAno)} />
-                  <Cartao titulo="Pares históricos" valor={numero(paresHistorico)} />
-                  <Cartao titulo="Valor histórico" valor={moeda(valorHistorico)} />
-                  <Cartao titulo="Pedidos históricos" valor={numero(pedidos)} />
-                  <Cartao
-                    titulo="Última compra no histórico"
-                    valor={ultimaCompraGrupo
-                      ? ultimaCompraGrupo.toLocaleDateString("pt-BR")
-                      : "Sem histórico"}
-                  />
-                </div>
-              </section>
-
               <section id="lista-grupos" style={painel}>
                 <TituloSecao
-                  numeroSecao="02"
+                  numeroSecao="01"
                   titulo="Prioridades de reativação"
                 />
 
@@ -1352,48 +1352,7 @@ export default async function VisaoGrupos({ searchParams }: Props) {
 
               <section style={painel}>
                 <TituloSecao
-                  numeroSecao="03"
-                  titulo="Mix de produtos do grupo"
-                />
-
-                <div style={{ overflowX: "auto" }}>
-                  <table style={{ width: "100%", borderCollapse: "collapse" }}>
-                    <thead>
-                      <tr>
-                        {[
-                          "Linha",
-                          "Empresas compradoras",
-                          "Pares",
-                          "Valor",
-                          "Pedidos",
-                          "Última compra",
-                        ].map(t => <th key={t} style={th}>{t}</th>)}
-                      </tr>
-                    </thead>
-                    <tbody>
-                      {linhas.slice(0, 15).map(l => (
-                        <tr key={l.codigo || l.nome}>
-                          <td style={{ ...td, fontWeight: 800 }}>{l.nome}</td>
-                          <td style={td}>{numero(l.clientes.size)}</td>
-                          <td style={td}>{numero(l.pares)}</td>
-                          <td style={td}>{moeda(l.valor)}</td>
-                          <td style={td}>{numero(l.pedidos.size)}</td>
-                          <td style={td}>
-                            {l.ultima
-                              ? l.ultima.toLocaleDateString("pt-BR")
-                              : "—"}
-                          </td>
-                        </tr>
-                      ))}
-                    </tbody>
-                  </table>
-                  {!linhas.length && <p>Sem histórico de mix disponível.</p>}
-                </div>
-              </section>
-
-              <section style={painel}>
-                <TituloSecao
-                  numeroSecao="04"
+                  numeroSecao="02"
                   titulo="Oportunidades comerciais"
                 />
 
@@ -1434,48 +1393,17 @@ export default async function VisaoGrupos({ searchParams }: Props) {
                 </p>
               </section>
 
-              <section style={painel}>
-                <TituloSecao
-                  numeroSecao="05"
-                  titulo="Referências mais compradas"
-                />
+              <AnaliseComercialGrupo360 mostrar="historico" vendas={vendasGrupo} clientesGrupo={empresas} clientesCarteira={clientes} />
 
-                <div style={{ overflowX: "auto" }}>
-                  <table style={{ width: "100%", borderCollapse: "collapse" }}>
-                    <thead>
-                      <tr>
-                        {[
-                          "Referência",
-                          "Linha",
-                          "Pares históricos",
-                          "Valor histórico",
-                          "Última compra",
-                        ].map(t => <th key={t} style={th}>{t}</th>)}
-                      </tr>
-                    </thead>
-                    <tbody>
-                      {topReferencias.map(r => (
-                        <tr key={`${r.referencia}|${r.linha}`}>
-                          <td style={{ ...td, fontWeight: 800 }}>
-                            {r.referencia}
-                          </td>
-                          <td style={td}>{r.linha}</td>
-                          <td style={td}>{numero(r.pares)}</td>
-                          <td style={td}>{moeda(r.valor)}</td>
-                          <td style={td}>
-                            {r.ultima
-                              ? r.ultima.toLocaleDateString("pt-BR")
-                              : "—"}
-                          </td>
-                        </tr>
-                      ))}
-                    </tbody>
-                  </table>
-                  {!topReferencias.length && (
-                    <p>Sem referências disponíveis.</p>
-                  )}
-                </div>
-              </section>
+
+
+              <AnaliseComercialGrupo360 mostrar="analise" vendas={vendasGrupo} clientesGrupo={empresas} clientesCarteira={clientes} />
+
+              <AnaliseComercialGrupo360 mostrar="potencial" vendas={vendasGrupo} clientesGrupo={empresas} clientesCarteira={clientes} />
+
+
+
+
 
               <section style={painel}>
                 <TituloSecao

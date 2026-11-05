@@ -18,6 +18,7 @@ import { acessoGlobal, regionaisPermitidas, representantesPermitidos } from "@/l
 import { notFound } from "next/navigation";
 import ResultadoAtendimento from "@/components/ResultadoAtendimento";
 import GestaoReativacao from "@/components/GestaoReativacao";
+import ExportarCliente360PDF from "@/components/ExportarCliente360PDF";
 import ClassificacaoCliente from "@/components/ClassificacaoCliente";
 import { obterClassificacoes } from "@/lib/classificacoes-db";
 import { carregarCarteira2027 } from "@/lib/carteira-2027-data";
@@ -393,6 +394,35 @@ const janelaComercial = await calcularJanelaCompraFaturamento(
     return Math.max(0, 1 - dif / 4);
   }
 
+  // Prioridade da sugestão: carteira ATIVA do representante;
+  // quando não houver amostra suficiente, carteira ATIVA da regional.
+  // Nunca completar a amostra com clientes de outras regionais.
+  const carteiraComparacao2027 = await carregarCarteira2027();
+  const representantesCliente = new Set(
+    (carteiraComparacao2027.clientes.find(c => cleanCode(c.codigoCliente) === codigoLimpo)
+      ?.representanteAtual ?? []).map(r => cleanCode(r.codigo))
+  );
+  const supervisoresCliente = new Set(
+    (carteiraComparacao2027.clientes.find(c => cleanCode(c.codigoCliente) === codigoLimpo)
+      ?.supervisores ?? []).map(r => cleanCode(r.codigo))
+  );
+  if (cliente.rep) representantesCliente.add(cleanCode(cliente.rep));
+  if (cliente.sup) supervisoresCliente.add(cleanCode(cliente.sup));
+
+  const ativosMesmoRepresentante = new Set<string>();
+  const ativosMesmaRegional = new Set<string>();
+  for (const c of carteiraComparacao2027.clientes) {
+    if (c.carteira !== "01_ATIVA") continue;
+    const cod = cleanCode(c.codigoCliente);
+    if (!cod || cod === codigoLimpo) continue;
+    if (c.representanteAtual.some(r => representantesCliente.has(cleanCode(r.codigo)))) {
+      ativosMesmoRepresentante.add(cod);
+    }
+    if (c.supervisores.some(r => supervisoresCliente.has(cleanCode(r.codigo)))) {
+      ativosMesmaRegional.add(cod);
+    }
+  }
+
   const candidatosSemelhantes = perfisHistoricos
     .map((perfil) => {
       const cod = cleanCode(perfil.codigo_cliente);
@@ -436,15 +466,27 @@ const janelaComercial = await calcularJanelaCompraFaturamento(
       };
     })
     .filter((x): x is NonNullable<typeof x> => !!x)
-    .sort((a, b) => b.scoreSimilaridade - a.scoreSimilaridade)
+    .sort((a, b) => b.scoreSimilaridade - a.scoreSimilaridade);
+
+  const candidatosRep = candidatosSemelhantes.filter(c =>
+    ativosMesmoRepresentante.has(c.codigo)
+  );
+  const candidatosRegional = candidatosSemelhantes.filter(c =>
+    ativosMesmaRegional.has(c.codigo)
+  );
+  const usarCarteiraRep = candidatosRep.length >= 10;
+  const origemComparacao = usarCarteiraRep
+    ? "carteira ativa do representante"
+    : "carteira ativa da regional do supervisor";
+  const candidatosComparacao = (usarCarteiraRep ? candidatosRep : candidatosRegional)
     .slice(0, 40);
 
   // Consulta agrupada dos clientes semelhantes.
   const mapaVendasSemelhantes = await buscarVendasClientes360(
-    candidatosSemelhantes.map((c) => c.codigo)
+    candidatosComparacao.map((c) => c.codigo)
   );
 
-  for (const candidato of candidatosSemelhantes) {
+  for (const candidato of candidatosComparacao) {
     const vendas =
       mapaVendasSemelhantes.get(candidato.codigo) ?? [];
 
@@ -464,7 +506,7 @@ const janelaComercial = await calcularJanelaCompraFaturamento(
     candidato.vendas = vendas;
   }
 
-  const candidatosComVendas = candidatosSemelhantes.filter(
+  const candidatosComVendas = candidatosComparacao.filter(
     (c) => c.vendas.length > 0
   );
 
@@ -583,7 +625,7 @@ const janelaComercial = await calcularJanelaCompraFaturamento(
   // PLAY e prioridade comercial para todos os clientes, inclusive compradores.
   // Se nao houver compras entre similares, usamos 0 real e nao inventamos score.
   const produtosPotenciais = (() => {
-    if (!playAtiva360) return produtosPotenciaisCalculados;
+    // A linha PLAY permanece visível para todos os clientes.
     const playEncontrada = produtosPotenciaisCalculados.find(p => normalizarLinha360(p.codigoLinha) === linhaPlay360);
     const playBase = produtosAutorizados.find(p => normalizarLinha360(p.codigoLinha) === linhaPlay360);
     const play = playEncontrada ?? {
@@ -970,6 +1012,7 @@ const janelaComercial = await calcularJanelaCompraFaturamento(
   const cadastro2027 = carteira2027.clientes.find(
     (c) => cleanCode(c.codigoCliente) === codigoLimpo
   );
+  const razaoSocial360 = String(cadastro2027?.razaoSocial || cliente.razao || "").trim();
   const contatos360 = cadastro2027?.contatos ?? [];
   const endereco360 = cadastro2027
     ? [
@@ -1028,7 +1071,7 @@ const janelaComercial = await calcularJanelaCompraFaturamento(
             </div>
 
             <h1 style={styles.titulo}>
-              {cliente.codigo} — {cliente.razao}
+              {cliente.codigo} — {razaoSocial360 || "Razão social não informada"}
             </h1>
 
             <div style={styles.localizacao}>
@@ -1053,6 +1096,32 @@ const janelaComercial = await calcularJanelaCompraFaturamento(
                     : "NÃO CLASSIFICADA"
                 }
               </span>
+            </div>
+
+            {/* A analise financeira pertence ao cabecalho do Cliente 360. */}
+            <div style={{ marginTop: 14 }}>
+              <a
+                href={`https://wa.me/5518997168520?text=${encodeURIComponent(
+                  `Olá! Preciso que faça uma nova análise financeira do cliente:\n\nCódigo: ${cliente.codigo}\nRazão Social: ${String(cadastro2027?.razaoSocial || cliente.razao || "").trim()}\nCNPJ: ${String(cadastro2027?.cnpj || "").replace(/\D/g, "").replace(/^(\d{2})(\d{3})(\d{3})(\d{4})(\d{2})$/, "$1.$2.$3/$4-$5")}`
+                )}`}
+                target="_blank"
+                rel="noopener noreferrer"
+                style={{
+                  display: "inline-flex",
+                  alignItems: "center",
+                  gap: 9,
+                  background: "#16a34a",
+                  color: "#ffffff",
+                  borderRadius: 10,
+                  padding: "11px 16px",
+                  textDecoration: "none",
+                  fontWeight: 800,
+                  fontSize: 13,
+                  boxShadow: "0 3px 8px rgba(0,0,0,0.14)",
+                }}
+              >
+                💰 Solicitar análise financeira
+              </a>
             </div>
           </div>
 
@@ -1163,6 +1232,7 @@ const janelaComercial = await calcularJanelaCompraFaturamento(
           </p>
           {encerrada && <p style={{fontWeight:800,color:"#b42318"}}>EMPRESA ENCERRADA — FORA DA FILA COMERCIAL. Histórico preservado.</p>}
         </section>
+        {!["REPRESENTANTE", "REP"].includes(String(usuario.perfil ?? "").toUpperCase()) && (
         <ClassificacaoCliente
           codigo={codigoLimpo}
           iniciais={iniciais}
@@ -1174,6 +1244,7 @@ const janelaComercial = await calcularJanelaCompraFaturamento(
           motivosPrioridade={prioridadeCalculada.motivos}
           reativacao={prioridadeCalculada.reativacao}
         />
+        )}
 
         {/* CARDS */}
 
@@ -1587,77 +1658,17 @@ const janelaComercial = await calcularJanelaCompraFaturamento(
           </section>
         )}
 
-        {/* MIX DE PRODUTOS */}
-        <section style={styles.bloco}>
-          <div style={styles.blocoTitulo}><span style={styles.numeroSecao}>03</span>Mix de produtos</div>
-          {mixLinhas.length ? (
-            <div style={styles.tableWrap}><table style={styles.tabela}>
-              <thead><tr>
-                <th style={styles.th}>Linha</th><th style={styles.thRight}>Pares</th>
-                <th style={styles.thRight}>Valor</th><th style={styles.thRight}>Pedidos</th>
-                <th style={styles.thRight}>Última compra</th><th style={styles.thRight}>Dias sem compra</th>
-              </tr></thead>
-              <tbody>{mixLinhas.slice(0,12).map((m) => (
-                <tr key={m.chave}>
-                  <td style={styles.td}><div style={styles.linhaNome}>{m.linha}</div>{m.codigoLinha && <div style={styles.linhaCodigo}>Cód. {m.codigoLinha}</div>}
-                    <small style={{color: linhasAtivas360.has(normalizarLinha360(m.codigoLinha)) ? "#15803d" : "#92400e", fontWeight: 700}}>
-                      {linhasAtivas360.has(normalizarLinha360(m.codigoLinha)) ? "● Linha ativa na lista comercial" : "Histórico — fora da lista atual"}
-                    </small></td>
-                  <td style={styles.tdRight}>{numero(m.pares)}</td><td style={styles.tdRight}>{moeda(m.valor)}</td>
-                  <td style={styles.tdRight}>{numero(m.pedidos.size)}</td><td style={styles.tdRight}>{dataBR(m.ultimaCompra)}</td>
-                  <td style={styles.tdRight}>{m.diasSemCompra === null ? "—" : numero(m.diasSemCompra)}</td>
-                </tr>
-              ))}</tbody>
-            </table></div>
-          ) : <div style={styles.vazio}>Sem mix de produtos disponível para este cliente.</div>}
-        </section>
-
         {!encerrada && <>
-        {/* OPORTUNIDADES */}
-        <section style={styles.bloco}>
-          <div style={styles.blocoTitulo}><span style={styles.numeroSecao}>04</span>Oportunidades comerciais</div>
-          <div style={styles.oportunidadesGrid}>
-            {oportunidades.map((o) => (
-              <div key={o.chave} style={styles.oportunidadeCard}>
-                <div style={styles.oportunidadeTopo}>
-                  <div><div style={styles.oportunidadeLinha}>{o.linha}</div>{o.codigoLinha && <div style={styles.linhaCodigo}>Cód. {o.codigoLinha}</div>}</div>
-                  <div style={{...styles.badge, ...(o.potencial === "ALTO" ? styles.badgeAlto : o.potencial === "BAIXO" ? styles.badgeBaixo : styles.badgeMedio)}}>{o.potencial}</div>
-                </div>
-                <div style={styles.scoreLinha}><strong>{o.score}</strong><span>/100 score comercial</span></div>
-                <div style={styles.barra}><div style={{...styles.barraPreenchida, width: `${o.score}%`}} /></div>
-                <div style={styles.oportunidadeMotivo}>{o.motivo}</div>
-              </div>
-            ))}
-          </div>
-          <div style={styles.metodologia}>Score baseado no histórico do próprio cliente: recência 35%, frequência 25%, volume 20% e valor 20%. É um indicador comercial explicável, não uma probabilidade estatística de compra.</div>
-        </section>
-
-        {/* REFERÊNCIAS */}
-        <section style={styles.bloco}>
-          <div style={styles.blocoTitulo}><span style={styles.numeroSecao}>05</span>Referências para trabalhar</div>
-          {referencias.length ? (
-            <div style={styles.tableWrap}><table style={styles.tabela}>
-              <thead><tr><th style={styles.th}>Referência</th><th style={styles.th}>Linha</th><th style={styles.thRight}>Pares históricos</th><th style={styles.thRight}>Valor histórico</th><th style={styles.thRight}>Última compra</th></tr></thead>
-              <tbody>{referencias.map((r) => (
-                <tr key={`${r.referencia}-${r.codigoLinha}`}>
-                  <td style={styles.td}><strong>{r.referencia}</strong></td><td style={styles.td}>{r.linha}</td>
-                  <td style={styles.tdRight}>{numero(r.pares)}</td><td style={styles.tdRight}>{moeda(r.valor)}</td><td style={styles.tdRight}>{dataBR(r.ultimaCompra)}</td>
-                </tr>
-              ))}</tbody>
-            </table></div>
-          ) : <div style={styles.vazio}>Sem referências disponíveis para este cliente.</div>}
-        </section>
-
         {/* PRODUTOS COM POTENCIAL */}
         <section style={styles.bloco}>
           <div style={styles.blocoTitulo}>
-            <span style={styles.numeroSecao}>06</span>
+            <span style={styles.numeroSecao}>03</span>
             Produtos com potencial
           </div>
 
           <div style={styles.similarResumo}>
-            Comparação com <strong>{grupoSimilar.length}</strong> clientes de perfil semelhante,
-            considerando porte histórico, volume, frequência, amplitude de mix e proximidade comercial.
+            Comparação com <strong>{grupoSimilar.length}</strong> clientes da {origemComparacao},
+            considerando porte histórico, volume, frequência e amplitude de mix.
           </div>
 
           {produtosPotenciais.length ? (
@@ -1736,185 +1747,8 @@ const janelaComercial = await calcularJanelaCompraFaturamento(
           </div>
         </section>
 
-        {/* REFERÊNCIAS AUTORIZADAS E CAMPANHAS */}
-        <section style={styles.bloco}>
-          <div style={styles.blocoTitulo}>
-            <span style={styles.numeroSecao}>07</span>
-            Referências em venda e campanhas
-          </div>
-
-          <div style={styles.similarResumo}>
-            O histórico identifica a oportunidade. A referência só entra nesta lista se estiver
-            na base oficial de <strong>Produtos Autorizados para Venda</strong> e possuir venda
-            recente no grupo semelhante.
-          </div>
-
-          <div style={styles.planoGrid}>
-            <div style={styles.planoCard}>
-              <div style={styles.planoCardTitulo}>REFERÊNCIAS RECOMENDADAS</div>
-              {referenciasAutorizadasSugestao.length ? (
-                referenciasAutorizadasSugestao.map((r) => (
-                  <div key={r.referencia} style={styles.refAutorizada}>
-                    <div>
-                      <strong>{r.referencia}</strong>
-                      {r.nome && <span>{r.nome}</span>}
-                      <span>{r.linha}</span>
-                      {r.produtos[0] && <small>{r.produtos[0]}</small>}
-                    </div>
-                    <div style={styles.refPerformance}>
-                      <b>{numero(r.paresRecentes)} pares</b>
-                      <span>{r.clientesRecentes} clientes • últimos 180 dias</span>
-                    </div>
-                  </div>
-                ))
-              ) : (
-                <div style={styles.planoTexto}>
-                  Não encontrei referência autorizada com venda recente suficiente para esta oportunidade.
-                </div>
-              )}
-            </div>
-
-            <div style={styles.planoCard}>
-              <div style={styles.planoCardTitulo}>CAMPANHAS PARA O ATENDIMENTO</div>
-              {campanhasAplicaveis.length ? (
-                campanhasAplicaveis.map((c) => (
-                  <div key={c.nome} style={styles.campanhaCard}>
-                    <div style={styles.campanhaTopo}>
-                      <strong>{c.nome}</strong>
-                      <span style={{
-                        ...styles.badge,
-                        ...(c.prioridade === "ALTA" ? styles.badgeAlto : styles.badgeMedio)
-                      }}>
-                        {c.prioridade}
-                      </span>
-                    </div>
-                    <p>{c.motivo}</p>
-                    {c.referencias?.length ? (
-                      <div style={{ margin: "6px 0", fontSize: 11, fontWeight: 700 }}>
-                        {c.referencias.slice(0, 4).map((ref) => (
-                          <div key={ref}>• {ref}</div>
-                        ))}
-                      </div>
-                    ) : null}
-                    <small>{c.mecanica}</small>
-                  </div>
-                ))
-              ) : (
-                <div style={styles.planoTexto}>
-                  Nenhuma campanha do material atual foi associada automaticamente ao perfil deste cliente.
-                </div>
-              )}
-            </div>
-          </div>
-
-          <div style={styles.metodologia}>
-            Produtos fora da base autorizada são bloqueados da recomendação, mesmo que tenham bom histórico.
-            As campanhas são sugeridas somente quando as regras disponíveis no material permitem associação automática.
-          </div>
-        </section>
-
-        {/* PLANO DA VISITA */}
-        <section style={styles.bloco}>
-          <div style={styles.blocoTitulo}>
-            <span style={styles.numeroSecao}>08</span>
-            Plano da visita
-          </div>
-
-          <div style={styles.planoHero}>
-            <div>
-              <div style={styles.planoLabel}>OBJETIVO PRINCIPAL</div>
-              <div style={styles.planoObjetivo}>{objetivoVisita}</div>
-            </div>
-            {quantidadeSugerida > 0 && (
-              <div style={styles.quantidadeBox}>
-                <span>Referência inicial</span>
-                <strong>{numero(quantidadeSugerida)} pares</strong>
-                <small>mediana observada no grupo semelhante</small>
-              </div>
-            )}
-          </div>
-
-          <div style={styles.planoGrid}>
-            <div style={styles.planoCard}>
-              <div style={styles.planoCardTitulo}>1. O que oferecer</div>
-              {linhasPrioritarias.length ? (
-                linhasPrioritarias.map((p, i) => (
-                  <div key={p.chave} style={styles.planoItem}>
-                    <span style={styles.planoOrdem}>{i + 1}</span>
-                    <div>
-                      <strong>{p.linha}</strong>
-                      <small>
-                        {p.penetracao.toFixed(0)}% de penetração entre semelhantes
-                      </small>
-                    </div>
-                  </div>
-                ))
-              ) : (
-                <div style={styles.planoTexto}>Trabalhar as linhas de maior score histórico.</div>
-              )}
-            </div>
-
-            <div style={styles.planoCard}>
-              <div style={styles.planoCardTitulo}>2. Referências prioritárias</div>
-              {referenciasPrioritarias.length ? (
-                referenciasPrioritarias.map((r) => (
-                  <div key={`${r.linha}-${r.referencia}`} style={styles.refVisita}>
-                    <strong>{r.referencia}</strong>
-                    <span>{r.linha}</span>
-                  </div>
-                ))
-              ) : (
-                <div style={styles.planoTexto}>
-                  Usar as referências de maior histórico exibidas na seção 05.
-                </div>
-              )}
-            </div>
-
-            <div style={styles.planoCard}>
-              <div style={styles.planoCardTitulo}>3. Argumento comercial</div>
-              <div style={styles.planoTexto}>{argumentoPrincipal}</div>
-            </div>
-
-            <div style={styles.planoCard}>
-              <div style={styles.planoCardTitulo}>4. Atenção antes do pedido</div>
-              <div style={styles.alertaFinanceiro}>{alertaFinanceiro}</div>
-              <div style={styles.planoSecundario}>
-                Última compra: <strong>{dataBR(ultimaCompra)}</strong>
-                {diasSemCompra !== null && <> • {numero(diasSemCompra)} dias sem compra</>}
-              </div>
-            </div>
-          </div>
-
-          <div style={styles.roteiroBox}>
-            <div style={styles.planoCardTitulo}>ROTEIRO SUGERIDO PARA A CONVERSA</div>
-            <div style={styles.roteiroSteps}>
-              <span><b>01</b> Revisar o histórico recente</span>
-              <span><b>02</b> Apresentar a principal oportunidade de mix</span>
-              <span><b>03</b> Mostrar referências prioritárias</span>
-              <span><b>04</b> Ajustar quantidade à realidade da loja</span>
-              <span><b>05</b> Validar limite e condição antes do fechamento</span>
-            </div>
-          </div>
-        </section>
-
         {/* RESULTADO DO ATENDIMENTO */}
-        <GestaoReativacao codigoCliente={cliente.codigo} />
-          <ResultadoAtendimento
-          codigoCliente={cliente.codigo}
-          nomeCliente={cliente.razao}
-          codigoRepresentante={cliente.rep}
-          usuario={cliente.rep}
-          linhasDisponiveis={[
-            ...new Set(
-              [
-                ...mixLinhas.map((x) => x.linha),
-                ...produtosPotenciais.map((x) => x.linha),
-              ].filter(Boolean)
-            ),
-          ]}
-          campanhasDisponiveis={campanhasAplicaveis.map((x) => x.nome)}
-        />
-
+        <GestaoReativacao codigoCliente={cliente.codigo} razaoSocial={razaoSocial360} cnpj={cadastro2027?.cnpj ?? ""} />
         <section style={styles.preditiva}>
           <div>
             <div style={styles.eyebrowBranco}>INTELIGÊNCIA COMERCIAL</div>
@@ -1929,6 +1763,8 @@ const janelaComercial = await calcularJanelaCompraFaturamento(
         </section>
         </>}
 
+
+        <ExportarCliente360PDF codigoCliente={codigoLimpo} />
       </div>
     </main>
   );

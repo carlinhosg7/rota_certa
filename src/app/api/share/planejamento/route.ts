@@ -1,4 +1,5 @@
 import { podeAcessarShare, ehAdminShare, pertenceRepresentanteShare } from "@/lib/share-acesso";
+import { obterEscopoShare, podeConsultarShare, representanteNoEscopo } from "@/lib/share-escopo";
 import { cookies } from "next/headers";
 import { validarToken } from "@/lib/auth";
 import { NextRequest, NextResponse } from "next/server";
@@ -47,18 +48,43 @@ export async function GET(req: NextRequest) {
     );
   }
 
-  if (!podeAcessarShare(usuario)) {
+  const escopo = await obterEscopoShare(usuario);
+
+  if (!podeConsultarShare(escopo)) {
     return NextResponse.json(
       { erro: "Sem permissao" }, { status: 403 }
     );
   }
 
   try {
+    const representanteSelecionado = String(
+      req.nextUrl.searchParams.get("representante") ?? ""
+    ).trim().replace(/\.0+$/, "");
+
+    if (
+      representanteSelecionado &&
+      !representanteNoEscopo(escopo, representanteSelecionado)
+    ) {
+      return NextResponse.json(
+        { erro: "Representante nao autorizado" },
+        { status: 403 }
+      );
+    }
+
+    const clientePermitido = (codigo: unknown): boolean => {
+      const rep = String(codigo ?? "")
+        .trim()
+        .replace(/\.0+$/, "");
+
+      return representanteNoEscopo(escopo, rep) &&
+        (!representanteSelecionado || rep === representanteSelecionado);
+    };
+
     const dados = await lerJSONShare<Payload>(
       "share-potencial-clientes.json"
     );
 
-    const cadastroRestrito = ehAdminShare(usuario) ? null :
+    const cadastroRestrito = escopo.nacional && !representanteSelecionado ? null :
       await lerJSONShare<Record<string, Cliente[]>>("share-clientes.json");
 
     const ibge = req.nextUrl.searchParams.get("ibge");
@@ -74,7 +100,7 @@ export async function GET(req: NextRequest) {
         "share-clientes.json"
       );
 
-      const clientes = (cadastro[ibge] ?? []).filter(c => pertenceRepresentanteShare(usuario, c.codigo_representante)).map(c => ({
+      const clientes = (cadastro[ibge] ?? []).filter(c => clientePermitido(c.codigo_representante)).map(c => ({
         ...c,
         vendas2025: dados.cidades[ibge]?.[c.codigo]?.["2025"] ?? 0,
         pico: dados.cidades[ibge]?.[c.codigo]?.pico ?? 0,
@@ -92,7 +118,7 @@ export async function GET(req: NextRequest) {
     for (const [cidade, clientes] of Object.entries(dados.cidades)) {
       const codigosPermitidos = cadastroRestrito === null ? null : new Set(
         (cadastroRestrito[cidade] ?? [])
-          .filter(c => pertenceRepresentanteShare(usuario, c.codigo_representante))
+          .filter(c => clientePermitido(c.codigo_representante))
           .map(c => String(c.codigo))
       );
       if (codigosPermitidos !== null && codigosPermitidos.size === 0) continue;

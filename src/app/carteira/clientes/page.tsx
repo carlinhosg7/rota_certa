@@ -66,9 +66,12 @@ const titulos: Record<string, string> = {
   todos: "Todos os clientes",
   ativa: "Carteira 01 — Ativa",
   reativacao: "Carteira 02 — Reativação",
-  pendentes: "Pendentes de qualificação",
   bloqueados: "Clientes com bloqueio financeiro",
   limite: "Clientes com limite disponível",
+  ativa_bloqueados: "Carteira 01 — Bloqueio financeiro",
+  ativa_limite: "Carteira 01 — Com limite disponível",
+  reativacao_bloqueados: "Carteira 02 — Bloqueio financeiro",
+  reativacao_limite: "Carteira 02 — Com limite disponível",
   "25a36": "Reativação — 25 a 36 meses",
   "37a60": "Reativação — 37 a 60 meses",
   "acima60": "Reativação — Acima de 60 meses"
@@ -82,6 +85,7 @@ export default async function ListaCarteira({ searchParams }: Props) {
   if (!u) redirect("/");
 
   const perfil = String(u.perfil ?? "").toUpperCase();
+  const mostrarReceita = perfil !== "REPRESENTANTE" && perfil !== "REP";
   const usuario = String(u.usuario ?? "");
   const nome = String(u.nome ?? usuario);
   const repLogin = cod(u.codigo_representante || u.usuario);
@@ -176,20 +180,30 @@ export default async function ListaCarteira({ searchParams }: Props) {
     );
   }
 
-  if (filtro === "ativa") {
+  // Receita fiscal: gestores podem consultar baixadas somente na visão fiscal.
+  // Todas as carteiras comerciais e seus indicadores financeiros excluem BAIXADA.
+  if (!(mostrarReceita && receita === "BAIXADA")) {
+    clientes = clientes.filter(c => String(c.situacaoEmpresa || "").trim().toUpperCase() !== "BAIXADA");
+  }
+  const carteirasFinanceiras: Record<string, { situacao: string; tipo: "bloqueados" | "limite" }> = {
+    ativa_bloqueados: { situacao: "ATIVA", tipo: "bloqueados" },
+    ativa_limite: { situacao: "ATIVA", tipo: "limite" },
+    reativacao_bloqueados: { situacao: "REATIVACAO", tipo: "bloqueados" },
+    reativacao_limite: { situacao: "REATIVACAO", tipo: "limite" },
+  };
+  const financeiro = carteirasFinanceiras[filtro];
+  if (financeiro) {
+    clientes = clientes.filter(c => c.situacao === financeiro.situacao);
+    clientes = clientes.filter(c => financeiro.tipo === "bloqueados"
+      ? Boolean(c.bloqueadoFinanceiro) : Number(c.limiteDisponivel) > 0);
+  } else if (filtro === "ativa") {
     clientes = clientes.filter(c => c.situacao === "ATIVA");
   } else if (filtro === "reativacao") {
     clientes = clientes.filter(c => c.situacao === "REATIVACAO");
-  } else if (filtro === "pendentes") {
-    clientes = clientes.filter(c =>
-      c.situacao === "PENDENTE_QUALIFICACAO"
-    );
   } else if (filtro === "bloqueados") {
     clientes = clientes.filter(c => c.bloqueadoFinanceiro);
   } else if (filtro === "limite") {
-    clientes = clientes.filter(c =>
-      Number(c.limiteDisponivel) > 0
-    );
+    clientes = clientes.filter(c => Number(c.limiteDisponivel) > 0);
   }
 
   if (filtro === "25a36") {
@@ -206,7 +220,7 @@ export default async function ListaCarteira({ searchParams }: Props) {
     );
   }
   // PAINEL_RECEITA_2027
-  if (receita) {
+  if (receita && mostrarReceita) {
     clientes = clientes.filter(c => String(c.situacaoEmpresa || "NAO VERIFICADA").replaceAll("_", " ").toUpperCase() === receita);
   }
 
@@ -308,14 +322,15 @@ export default async function ListaCarteira({ searchParams }: Props) {
               name="representante"
               value={representante}
             />
-
-            <label style={{display: "grid", gap: 5, fontSize: 12}}>
-              Situação Receita
-              <select name="receita" defaultValue={receita} style={{padding: 12, border: "1px solid #cbd5e1", borderRadius: 9}}>
-                <option value="">Todas</option>
-                {situacoesReceita.map(st => <option key={st} value={st}>{st}</option>)}
-              </select>
-            </label>
+            {mostrarReceita && (
+              <label style={{display: "grid", gap: 5, fontSize: 12}}>
+                Situação Receita
+                <select name="receita" defaultValue={receita} style={{padding: 12, border: "1px solid #cbd5e1", borderRadius: 9}}>
+                  <option value="">Todas</option>
+                  {situacoesReceita.map(st => <option key={st} value={st}>{st}</option>)}
+                </select>
+              </label>
+            )}
 
             <input
               name="busca"
@@ -365,7 +380,7 @@ export default async function ListaCarteira({ searchParams }: Props) {
                     "Demais Representantes",
                     "Última compra",
                     "Situação",
-                    "Receita Federal",
+                    ...(mostrarReceita ? ["Receita Federal"] : []),
                     "Ação"
                   ].map(t => (
                     <th
@@ -416,9 +431,11 @@ export default async function ListaCarteira({ searchParams }: Props) {
                       <td style={{ padding: 12 }}>
                         {c.situacao || c.carteira || "—"}
                       </td>
-                      <td style={{ padding: 12, fontWeight: 700 }}>
-                        {c.situacaoEmpresa || "NAO VERIFICADA"}
-                      </td>
+                      {mostrarReceita && (
+                        <td style={{ padding: 12, fontWeight: 700 }}>
+                          {c.situacaoEmpresa || "NAO VERIFICADA"}
+                        </td>
+                      )}
                       <td style={{ padding: 12 }}>
                         {codigo ? (
                           <Link

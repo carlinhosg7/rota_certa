@@ -28,13 +28,12 @@ type Historico = {
 };
 
 const classificacoes = [
-  ["EM_NEGOCIACAO", "Em negociação"],
-  ["REATIVADO", "Reativado"],
   ["AGUARDANDO_CREDITO", "Aguardando crédito"],
+  ["CREDITO_NEGADO", "Crédito negado"],
+  ["LOJA_FECHADA", "Loja fechada"],
+  ["PAROU_TRABALHAR_CALCADOS", "Parou de trabalhar com calçados"],
   ["SEM_INTERESSE", "Sem interesse"],
-  ["NAO_LOCALIZADO", "Não localizado"],
   ["EMPRESA_ENCERRADA", "Empresa encerrada"],
-  ["TENTATIVAS_ESGOTADAS", "Tentativas esgotadas"],
 ];
 
 const rotulos: Record<string, string> =
@@ -55,10 +54,18 @@ type Formulario = typeof inicial;
 
 export default function GestaoReativacao({
   codigoCliente,
+  razaoSocial,
+  cnpj,
 }: {
   codigoCliente: string;
+  razaoSocial: string;
+  cnpj: string;
 }) {
-  const [form, setForm] = useState<Formulario>(inicial);
+  const dataHojeLocal = () => {
+    const d = new Date();
+    return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
+  };
+  const [form, setForm] = useState<Formulario>(() => ({ ...inicial, data_proxima_acao: dataHojeLocal() }));
   const [historico, setHistorico] = useState<Historico[]>([]);
   const [carregando, setCarregando] = useState(true);
   const [salvando, setSalvando] = useState(false);
@@ -90,12 +97,12 @@ export default function GestaoReativacao({
               tentativas_contato: g.tentativas_contato,
               retorno: g.retorno ?? "",
               proxima_acao: g.proxima_acao ?? "",
-              data_proxima_acao: g.data_proxima_acao ?? "",
+              data_proxima_acao: g.data_proxima_acao || dataHojeLocal(),
               responsavel: g.responsavel ?? "",
               observacoes: g.observacoes ?? "",
               status_acao: g.status_acao,
             }
-          : { ...inicial }
+          : { ...inicial, data_proxima_acao: dataHojeLocal() }
       );
 
       setHistorico(dados.historico ?? []);
@@ -124,6 +131,11 @@ export default function GestaoReativacao({
     setErro("");
     setSucesso("");
 
+    if (form.classificacao === "SEM_INTERESSE" && !form.observacoes.trim()) {
+      setErro("Para Sem interesse, preencha obrigatoriamente as Observações.");
+      setSalvando(false);
+      return;
+    }
     try {
       const resposta = await fetch("/api/gestao-reativacao", {
         method: "POST",
@@ -290,8 +302,9 @@ export default function GestaoReativacao({
             </label>
 
             <label style={tituloCampo}>
-              Observações
+              Observações {form.classificacao === "SEM_INTERESSE" ? "* (obrigatório)" : ""}
               <textarea
+                required={form.classificacao === "SEM_INTERESSE"}
                 style={campo}
                 rows={3}
                 maxLength={3000}
@@ -300,6 +313,7 @@ export default function GestaoReativacao({
               />
             </label>
           </div>
+
 
           {erro && (
             <p role="alert" style={{ color: "#b91c1c" }}>{erro}</p>

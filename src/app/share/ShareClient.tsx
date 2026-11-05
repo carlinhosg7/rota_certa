@@ -3,10 +3,24 @@ import PlanejadorShare from './PlanejadorShare';
 
 import { useEffect, useMemo, useState } from 'react';
 import type { CidadeShare } from '../../lib/share';
+import { calcularShareMedio } from '../../lib/share';
 
 type Dados = { cidades: CidadeShare[]; ultimoAnoCompleto: number; vendasDisponiveis: boolean; observacao: string };
 type ClienteCidade = { codigo:string; razao_social:string; grupo_cliente:string; codigo_representante:string; representante:string; supervisor:string; cidade:string; uf:string };
 type DetalhesClientes = { clientes:ClienteCidade[]; total:number; visao360Template:string|null };
+
+
+type EquipeShare = {
+  codigo: string;
+  nome: string;
+  supervisor: string;
+  gerente: string;
+  vendas_ano: Record<string, number>;
+};
+
+type CidadeComEquipes = CidadeShare & {
+  equipes_share?: EquipeShare[];
+};
 
 const fmt = (n:number) => n.toLocaleString('pt-BR',{maximumFractionDigits:0});
 const pct = (n:number|null) => n===null ? '—' : `${n.toLocaleString('pt-BR',{minimumFractionDigits:2,maximumFractionDigits:2})}%`;
@@ -24,12 +38,12 @@ export default function ShareClient() {
   const [rep,setRep]=useState(''); const [uf,setUf]=useState(''); const [cidade,setCidade]=useState('');
   const [simulado,setSimulado]=useState(5); const [ordenar,setOrdenar]=useState<'cidade'|'potencial_pares'|'meta_pares_5pct'>('potencial_pares');
   useEffect(()=>{fetch('/api/share').then(async r=>{if(!r.ok)throw new Error(`HTTP ${r.status}`);return r.json()}).then(setDados).catch(e=>setErro(String(e)))},[]);
-  useEffect(()=>{fetch('/api/share/clientes?modo=contagem').then(async r=>{if(!r.ok)throw new Error(`HTTP ${r.status}`);return r.json()}).then((v:{contagens:Record<string,number>})=>setContagens(v.contagens??{})).catch(e=>setErroClientes('Contagem de clientes indisponível: '+String(e)))},[]);
+  useEffect(()=>{fetch('/api/share/clientes?modo=contagem' + (rep ? '&representante=' + encodeURIComponent(rep) : '')).then(async r=>{if(!r.ok)throw new Error(`HTTP ${r.status}`);return r.json()}).then((v:{contagens:Record<string,number>})=>setContagens(v.contagens??{})).catch(e=>setErroClientes('Contagem de clientes indisponível: '+String(e)))},[rep]);
   const base=dados?.cidades??[];
   async function abrirCidade(c:CidadeShare){
     setCidadeAberta(c); setClientesCidade(null); setBuscaCliente(''); setCarregandoCidade(true);
     try{
-      const r=await fetch('/api/share/clientes?ibge='+encodeURIComponent(String(c.codigo_ibge)));
+      const r=await fetch('/api/share/clientes?ibge='+encodeURIComponent(String(c.codigo_ibge)) + (rep ? '&representante=' + encodeURIComponent(rep) : ''));
       if(!r.ok)throw new Error(`HTTP ${r.status}`);
       setClientesCidade(await r.json() as DetalhesClientes);
     }catch(e){setClientesCidade({clientes:[],total:-1,visao360Template:null});setErroClientes('Falha ao carregar clientes da cidade: '+String(e));}
@@ -38,19 +52,127 @@ export default function ShareClient() {
   const clientesFiltrados=(clientesCidade?.clientes??[]).filter(c=>`${c.codigo} ${c.razao_social} ${c.grupo_cliente}`.toLocaleLowerCase('pt-BR').includes(buscaCliente.toLocaleLowerCase('pt-BR')));
   const url360=(codigo:string,template:string)=>template.replaceAll('{codigo}',encodeURIComponent(codigo));
   const unique=(values:string[])=>[...new Set(values.filter(Boolean))].sort((a,b)=>a.localeCompare(b,'pt-BR'));
-  const supervisores = useMemo(()=>unique(base.filter(c=>!gerente||c.gerente===gerente).map(c=>c.supervisor)),[base,gerente]);
-  const baseRepresentantes=useMemo(()=>base.filter(c=>(!gerente||c.gerente===gerente)&&(!supervisor||c.supervisor===supervisor)),[base,gerente,supervisor]);
-  const representantes=useMemo(()=>{
-    const mapa=new Map<string,string>();
-    for(const c of baseRepresentantes){
-      const codigo=String(c.representante_codigo??'').trim();
-      if(!codigo)continue;
-      const nome=String(c.representante??'').trim();
-      if(!mapa.has(codigo)||(!mapa.get(codigo)&&nome))mapa.set(codigo,nome);
+  // As opcoes comerciais sao derivadas dos representantes
+  // autorizados que a API enviou por municipio.
+  const baseComEquipes = base as CidadeComEquipes[];
+
+  const equipesDaCidade = (c: CidadeComEquipes): EquipeShare[] => {
+    if (Array.isArray(c.equipes_share) && c.equipes_share.length) {
+      return c.equipes_share;
     }
-    return [...mapa.entries()].sort(([a],[b])=>a.localeCompare(b,'pt-BR',{numeric:true}));
-  },[baseRepresentantes]);
-  const baseUF=useMemo(()=>baseRepresentantes.filter(c=>!rep||String(c.representante_codigo)===rep),[baseRepresentantes,rep]);
+
+    // Compatibilidade com registros do formato antigo.
+    const codigo = String(c.representante_codigo ?? "").trim();
+    if (!codigo) return [];
+
+    return [{
+      codigo,
+      nome: String(c.representante ?? codigo),
+      supervisor: String(c.supervisor ?? ""),
+      gerente: String(c.gerente ?? ""),
+      vendas_ano: c.vendas_ano ?? {},
+    }];
+  };
+
+  const gerentesDisponiveis = useMemo(
+    () => unique(
+      baseComEquipes.flatMap(c =>
+        equipesDaCidade(c).map(e => e.gerente)
+      )
+    ),
+    [base]
+  );
+
+  const supervisores = useMemo(
+    () => unique(
+      baseComEquipes.flatMap(c =>
+        equipesDaCidade(c)
+          .filter(e => !gerente || e.gerente === gerente)
+          .map(e => e.supervisor)
+      )
+    ),
+    [base, gerente]
+  );
+
+  const representantes = useMemo(() => {
+    const mapa = new Map<string, string>();
+
+    for (const c of baseComEquipes) {
+      for (const e of equipesDaCidade(c)) {
+        if (gerente && e.gerente !== gerente) continue;
+        if (supervisor && e.supervisor !== supervisor) continue;
+
+        if (!mapa.has(e.codigo)) {
+          mapa.set(e.codigo, e.nome);
+        }
+      }
+    }
+
+    return [...mapa.entries()].sort(([a], [b]) =>
+      a.localeCompare(b, "pt-BR", {numeric: true})
+    );
+  }, [base, gerente, supervisor]);
+
+  // Sem selecao comercial, preserva o historico municipal
+  // original. Com selecao, considera apenas a equipe escolhida.
+  // Cada municipio continua aparecendo uma unica vez.
+  const baseRepresentantes = useMemo(() => {
+    if (!gerente && !supervisor && !rep) {
+      return base;
+    }
+
+    return baseComEquipes.flatMap(c => {
+      const equipes = equipesDaCidade(c).filter(e =>
+        (!gerente || e.gerente === gerente) &&
+        (!supervisor || e.supervisor === supervisor) &&
+        (!rep || e.codigo === rep)
+      );
+
+      if (!equipes.length) return [];
+
+      const anos = new Set(
+        equipes.flatMap(e => Object.keys(e.vendas_ano ?? {}))
+      );
+
+      const vendas_ano: Record<string, number> = {};
+
+      for (const ano of anos) {
+        vendas_ano[ano] = equipes.reduce(
+          (total, e) =>
+            total + Number(e.vendas_ano?.[ano] ?? 0),
+          0
+        );
+      }
+
+      const equipeUnica = equipes.length === 1
+        ? equipes[0]
+        : null;
+
+      const supervisorUnico = new Set(
+        equipes.map(e => e.supervisor)
+      );
+
+      const gerenteUnico = new Set(
+        equipes.map(e => e.gerente)
+      );
+
+      return [{
+        ...c,
+        representante_codigo: equipeUnica?.codigo ?? "",
+        representante: equipeUnica?.nome ?? "Multiplos representantes",
+        supervisor: supervisorUnico.size === 1
+          ? equipes[0].supervisor
+          : "Multiplas regionais",
+        gerente: gerenteUnico.size === 1
+          ? equipes[0].gerente
+          : "Multiplos gerentes",
+        vendas_ano,
+      }];
+    });
+  }, [base, gerente, supervisor, rep]);
+
+  const baseUF = baseRepresentantes;
+
   const ufs=useMemo(()=>unique(baseUF.map(c=>c.uf)),[baseUF]);
   const baseCidades=useMemo(()=>baseUF.filter(c=>!uf||c.uf===uf),[baseUF,uf]);
   const cidades=useMemo(()=>unique(baseCidades.map(c=>c.cidade)),[baseCidades]);
@@ -74,6 +196,17 @@ export default function ShareClient() {
       .map(ano=>{const pares=paresAno(ano);return {ano,pares,share:potencial>0?pares/potencial*100:null};});
     return {potencial,meta:potencial*.05,projecao:potencial*simulado/100,paresUltimo,paresAtual,shareUltimo,shareAtual,media,evolucao};
   },[filtro,dados?.ultimoAnoCompleto,dados?.vendasDisponiveis,simulado,anoAtual,anosMedia.join(',')]);
+
+  const equipeOficial = (c: CidadeComEquipes): EquipeShare | undefined => {
+    const equipes = equipesDaCidade(c);
+
+    if (rep) {
+      return equipes.find(e => String(e.codigo) === String(rep));
+    }
+
+    return equipes.length === 1 ? equipes[0] : undefined;
+  };
+
   function baixarCSV(){
     const anoUltimo=String(dados?.ultimoAnoCompleto??anoAtual-1);
     const anoCorrente=String(anoAtual);
@@ -82,7 +215,7 @@ export default function ShareClient() {
       const pUltimo=Number(c.vendas_ano?.[anoUltimo]??0);
       const pAtual=Number(c.vendas_ano?.[anoCorrente]??0);
       const share=(p:number)=>c.potencial_pares>0?p/c.potencial_pares*100:'';
-      return [c.uf,c.cidade,c.codigo_ibge,c.gerente,c.supervisor,c.representante_codigo,c.representante,contagens[String(c.codigo_ibge)]??0,c.populacao,c.percentual_infantil*100,c.potencial_pares,c.meta_pares_5pct,pUltimo,share(pUltimo),pAtual,share(pAtual),c.share_medio_historico??'',simulado,c.potencial_pares*simulado/100];
+      return [c.uf,c.cidade,c.codigo_ibge,(equipeOficial(c)?.gerente ?? c.gerente),(equipeOficial(c)?.supervisor ?? c.supervisor),(equipeOficial(c)?.codigo ?? c.representante_codigo),c.representante,contagens[String(c.codigo_ibge)]??0,c.populacao,c.percentual_infantil*100,c.potencial_pares,c.meta_pares_5pct,pUltimo,share(pUltimo),pAtual,share(pAtual),calcularShareMedio(c.vendas_ano??{},c.potencial_pares,dados?.ultimoAnoCompleto ?? new Date().getFullYear()-1)??'',simulado,c.potencial_pares*simulado/100];
     });
     const csv=[header,...rows].map(r=>r.map(v=>'"'+String(v).replaceAll('"','""')+'"').join(';')).join('\r\n');
     const url=URL.createObjectURL(new Blob(['\ufeff'+csv],{type:'text/csv;charset=utf-8'}));
@@ -99,7 +232,7 @@ export default function ShareClient() {
       {erroClientes&&<p role="status" style={{color:'#b45309',fontSize:12}}>{erroClientes}</p>}
       {!dados.vendasDisponiveis&&<p role="status" style={{padding:12,background:'#fff7ed',borderRadius:8}}>Vendas dos Parquets ainda não integradas. Shares reais ficam indisponíveis até carregar <code>data/share-vendas-anuais.json</code>.</p>}
       <section style={{display:'grid',gridTemplateColumns:'repeat(auto-fit,minmax(190px,1fr))',gap:12,margin:'18px 0'}}>
-         <label>Gerente<select style={inputStyle} value={gerente} onChange={e=>{setGerente(e.target.value);setSupervisor('');setRep('');setUf('');setCidade('')}}><option value="">Todos</option>{unique(base.map(c=>c.gerente)).map(v=><option key={v} value={v}>{v}</option>)}</select></label>
+         <label>Gerente<select style={inputStyle} value={gerente} onChange={e=>{setGerente(e.target.value);setSupervisor('');setRep('');setUf('');setCidade('')}}><option value="">Todos</option>{gerentesDisponiveis.map(v=><option key={v} value={v}>{v}</option>)}</select></label>
          <label>Supervisor<select style={inputStyle} value={supervisor} onChange={e=>{setSupervisor(e.target.value);setRep('');setUf('');setCidade('')}}><option value="">Todos</option>{supervisores.map(v=><option key={v} value={v}>{v}</option>)}</select></label>
          <label>Representante<select style={inputStyle} value={rep} onChange={e=>{setRep(e.target.value);setUf('');setCidade('')}}><option value="">Todos</option>{representantes.map(([codigo,nome])=><option key={codigo} value={codigo}>{codigo}{nome?` - ${nome}`:''}</option>)}</select></label>
          <label>UF<select style={inputStyle} value={uf} onChange={e=>{setUf(e.target.value);setCidade('')}}><option value="">Todas</option>{ufs.map(v=><option key={v} value={v}>{v}</option>)}</select></label>
@@ -117,14 +250,14 @@ export default function ShareClient() {
         <button type="button" onClick={()=>setMostrarPlanejador(v=>!v)} style={{padding:'12px 16px',background:'#1d4ed8',color:'#fff',border:0,borderRadius:9,fontWeight:700,cursor:'pointer'}}>
           {mostrarPlanejador?'Ocultar planejador':'Abrir planejador de crescimento e prospecção'}
         </button>
-        {mostrarPlanejador&&<PlanejadorShare cidades={filtro} simulado={simulado}/>}
+        {mostrarPlanejador&&<PlanejadorShare cidades={filtro} simulado={simulado} representante={rep}/>}
       </section>
       <section style={{...cardStyle,marginTop:16}}><h2 style={{fontSize:20,fontWeight:700}}>Evolução do Share por ano</h2>
         {!total.evolucao.length?<p>Histórico indisponível até a integração dos Parquets.</p>:<div style={{overflowX:'auto'}}><table style={{width:'100%',borderCollapse:'collapse'}}><thead><tr><th>Ano</th><th>Pares vendidos</th><th>Share realizado</th><th>Meta</th></tr></thead><tbody>{total.evolucao.map(r=><tr key={r.ano}><td>{r.ano}{Number(r.ano)===anoAtual?' (parcial)':r.ano==='2022'?' (incompleto)':''}</td><td>{fmt(r.pares)}</td><td>{pct(r.share)}</td><td>5,00%</td></tr>)}</tbody></table></div>}
       </section>
       <section style={{...cardStyle,marginTop:16}}><div style={{display:'flex',justifyContent:'space-between',alignItems:'center',gap:12,flexWrap:'wrap'}}><h2 style={{fontSize:20,fontWeight:700}}>Detalhamento por cidade ({fmt(linhas.length)})</h2><div><select aria-label="Ordenar cidades" style={{...inputStyle,width:200,marginRight:8}} value={ordenar} onChange={e=>setOrdenar(e.target.value as typeof ordenar)}><option value="potencial_pares">Maior potencial</option><option value="meta_pares_5pct">Maior meta</option><option value="cidade">Cidade A–Z</option></select><button onClick={baixarCSV} style={{padding:'10px 16px',borderRadius:8,background:'#1d4ed8',color:'#fff',border:0,cursor:'pointer'}}>Exportar CSV</button></div></div>
         <div style={{maxHeight:550,overflow:'auto'}}><table style={{borderCollapse:'collapse',minWidth:1860,width:'100%',fontSize:13,textAlign:'left'}}><thead style={{position:'sticky',top:0,background:'#e2e8f0'}}><tr>{['UF','Cidade','Clientes','Gerente','Supervisor','Rep','População','% 0–14','Potencial','Meta 5%','Vendas '+anoAtual,'Share '+anoAtual+' parcial','Vendas '+dados.ultimoAnoCompleto,'Share '+dados.ultimoAnoCompleto,'Share médio','Projeção'].map(h=><th key={h} style={{padding:10,whiteSpace:'nowrap'}}>{h}</th>)}</tr></thead><tbody>{linhas.map(c=>{
-          const valores=[c.uf,fmt(contagens[String(c.codigo_ibge)]??0),c.gerente,c.supervisor,c.representante_codigo,fmt(c.populacao),pct(c.percentual_infantil*100),fmt(c.potencial_pares),fmt(c.meta_pares_5pct),fmt(Number(c.vendas_ano?.[String(anoAtual)]??0)),pct(c.potencial_pares>0?Number(c.vendas_ano?.[String(anoAtual)]??0)/c.potencial_pares*100:null),c.vendas_ano&&Object.hasOwn(c.vendas_ano,String(dados.ultimoAnoCompleto))?fmt(c.vendas_ano[String(dados.ultimoAnoCompleto)]):'—',pct(c.share_ultimo_ano),pct(c.share_medio_historico),fmt(c.potencial_pares*simulado/100)];
+          const valores=[c.uf,fmt(contagens[String(c.codigo_ibge)]??0),(equipeOficial(c)?.gerente ?? c.gerente),(equipeOficial(c)?.supervisor ?? c.supervisor),(equipeOficial(c)?.codigo ?? c.representante_codigo),fmt(c.populacao),pct(c.percentual_infantil*100),fmt(c.potencial_pares),fmt(c.meta_pares_5pct),fmt(Number(c.vendas_ano?.[String(anoAtual)]??0)),pct(c.potencial_pares>0?Number(c.vendas_ano?.[String(anoAtual)]??0)/c.potencial_pares*100:null),c.vendas_ano&&Object.hasOwn(c.vendas_ano,String(dados.ultimoAnoCompleto))?fmt(c.vendas_ano[String(dados.ultimoAnoCompleto)]):'—',pct(c.potencial_pares>0?Number(c.vendas_ano?.[String(dados.ultimoAnoCompleto)]??0)/c.potencial_pares*100:null),pct(calcularShareMedio(c.vendas_ano??{},c.potencial_pares,dados?.ultimoAnoCompleto ?? new Date().getFullYear()-1)),fmt(c.potencial_pares*simulado/100)];
           return <tr key={c.codigo_ibge} style={{borderBottom:'1px solid #e2e8f0'}}><td style={{padding:'8px 10px'}}>{valores[0]}</td><td style={{padding:'8px 10px',whiteSpace:'nowrap'}}><button type="button" title={`Ver clientes cadastrados em ${c.cidade} (${c.uf})`} onClick={()=>void abrirCidade(c)} style={{border:0,background:'transparent',padding:0,color:'#1d4ed8',cursor:'pointer',textDecoration:'underline',fontWeight:600}}>{c.cidade}</button></td>{valores.slice(1).map((v,i)=><td key={i} style={{padding:'8px 10px',whiteSpace:'nowrap'}}>{v}</td>)}</tr>;
         })}</tbody></table></div>
 

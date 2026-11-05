@@ -10,7 +10,7 @@ const fmt=(v:number)=>Math.round(v).toLocaleString('pt-BR');
 const pct=(v:number)=>v.toLocaleString('pt-BR',{minimumFractionDigits:1,maximumFractionDigits:1})+'%';
 const calculaCapacidade=(base:number,pico:number,crescimento:number)=>Math.max(0,Math.max(pico,base*(1+crescimento/100))-base);
 const css={border:'1px solid #cbd5e1',borderRadius:8,padding:'8px 10px',background:'white',color:'#0f172a'} as const;
-export default function PlanejadorShare({cidades,simulado}:{cidades:CidadeShare[];simulado:number}){
+export default function PlanejadorShare({cidades,simulado,representante}:{cidades:CidadeShare[];simulado:number;representante?:string}){
   const [resumo,setResumo]=useState<Resumo|null>(null);
   const [erro,setErro]=useState('');
   const [crescimento,setCrescimento]=useState(30);
@@ -19,7 +19,7 @@ export default function PlanejadorShare({cidades,simulado}:{cidades:CidadeShare[
   const [clientes,setClientes]=useState<Cliente[]|null>(null);
   const [carregando,setCarregando]=useState(false);
   const [busca,setBusca]=useState('');
-  useEffect(()=>{let cancelado=false;fetch('/api/share/planejamento').then(async r=>{if(!r.ok)throw new Error(`HTTP ${r.status}`);return r.json()}).then((r:Resumo)=>{if(!cancelado)setResumo(r)}).catch(e=>{if(!cancelado)setErro(String(e))});return()=>{cancelado=true}},[]);
+  useEffect(()=>{let cancelado=false;setResumo(null);setErro('');setSelecionada(null);setClientes(null);fetch('/api/share/planejamento' + (representante ? '?representante=' + encodeURIComponent(representante) : '')).then(async r=>{if(!r.ok)throw new Error(`HTTP ${r.status}`);return r.json()}).then((r:Resumo)=>{if(!cancelado)setResumo(r)}).catch(e=>{if(!cancelado)setErro(String(e))});return()=>{cancelado=true}},[representante]);
   const planos=useMemo(()=>{
     if(!resumo)return [] as PlanCidade[];
     return cidades.map(c=>{
@@ -43,7 +43,7 @@ export default function PlanejadorShare({cidades,simulado}:{cidades:CidadeShare[
   }),{clientes:0,ativos:0,gap5:0,gapSim:0,atuais5:0,novos5:0,atuaisSim:0,novosSim:0,conciliacao:0}),[planos]);
   async function abrir(p:PlanCidade){
     setSelecionada(p);setClientes(null);setBusca('');setCarregando(true);
-    try{const r=await fetch('/api/share/planejamento?ibge='+encodeURIComponent(String(p.cidade.codigo_ibge)));if(!r.ok)throw new Error(`HTTP ${r.status}`);const dados=await r.json() as {clientes:Cliente[]};setClientes(dados.clientes)}catch(e){setErro(String(e));setClientes([])}finally{setCarregando(false)}
+    try{const r=await fetch('/api/share/planejamento?ibge='+encodeURIComponent(String(p.cidade.codigo_ibge)) + (representante ? '&representante=' + encodeURIComponent(representante) : ''));if(!r.ok)throw new Error(`HTTP ${r.status}`);const dados=await r.json() as {clientes:Cliente[]};setClientes(dados.clientes)}catch(e){setErro(String(e));setClientes([])}finally{setCarregando(false)}
   }
   const alocacoes=useMemo(()=>{
     if(!selecionada||!clientes)return [] as Alocacao[];

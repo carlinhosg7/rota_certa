@@ -1,4 +1,4 @@
-﻿import { NextRequest, NextResponse } from "next/server";
+import { NextRequest, NextResponse } from "next/server";
 import { validarToken } from "@/lib/auth";
 import { supabase } from "@/lib/supabase";
 import { clienteAutorizado } from "@/lib/gestao-reativacao-acesso";
@@ -15,13 +15,12 @@ type SessaoGestao = {
 };
 
 const CLASSIFICACOES = [
-  "REATIVADO",
-  "EM_NEGOCIACAO",
   "AGUARDANDO_CREDITO",
+  "CREDITO_NEGADO",
+  "LOJA_FECHADA",
+  "PAROU_TRABALHAR_CALCADOS",
   "SEM_INTERESSE",
-  "NAO_LOCALIZADO",
   "EMPRESA_ENCERRADA",
-  "TENTATIVAS_ESGOTADAS",
 ];
 
 const STATUS_ACAO = [
@@ -215,6 +214,10 @@ export async function POST(req: NextRequest) {
 
     if (!STATUS_ACAO.includes(statusAcao)) {
       return erro("Status da ação inválido.", 400);
+    }
+
+    if (classificacao === "SEM_INTERESSE" && !texto(body.observacoes, 3000)) {
+      return erro("Observações obrigatórias para a classificação Sem interesse.", 400);
     }
 
     const tentativas = Number(body.tentativas_contato ?? 0);

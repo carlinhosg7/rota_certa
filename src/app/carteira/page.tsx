@@ -83,7 +83,7 @@ function cartao(
   return (
     <Link
       href={`/carteira/clientes?${params.toString()}`}
-      style={{ textDecoration: "none", display: "block", color: "inherit" }}
+      style={{ textDecoration: "none", display: "block", alignSelf: "start", color: "inherit" }}
     >
       <article style={{
         background: "#fff",
@@ -91,7 +91,7 @@ function cartao(
         borderRadius: 16,
         padding: 22,
         minWidth: 0,
-        height: "100%",
+        height: "auto",
         cursor: "pointer",
         boxShadow: "0 2px 6px rgba(0,0,0,.03)"
       }}>
@@ -133,6 +133,7 @@ export default async function CarteiraPage({
   if (!sessao) redirect("/");
 
   const perfil = String(sessao.perfil ?? "").toUpperCase();
+  const mostrarReceita = perfil !== "REPRESENTANTE" && perfil !== "REP";
   const nome = String(
     sessao.nome ?? sessao.usuario ?? "Usuário"
   );
@@ -245,7 +246,7 @@ export default async function CarteiraPage({
   // PAINEL_RECEITA_2027: contagem por cliente e Grupo Cliente distinto.
   const clientesEscopo = clientes;
   const situacoesReceita = ["ATIVA", "BAIXADA", "INAPTA", "SUSPENSA", "NAO LOCALIZADO", "PENDENTE FORMATO", "NAO VERIFICADA"];
-  const receitaValida = situacoesReceita.includes(receitaFiltro) ? receitaFiltro : "";
+  const receitaValida = mostrarReceita && situacoesReceita.includes(receitaFiltro) ? receitaFiltro : "";
   const indicadoresReceita = situacoesReceita.map(situacao => {
     const encontrados = clientesEscopo.filter(c =>
       String(c.situacaoEmpresa || "NAO VERIFICADA").replaceAll("_", " ").toUpperCase() === situacao
@@ -260,6 +261,8 @@ export default async function CarteiraPage({
     clientes = clientes.filter(c => String(c.situacaoEmpresa || "NAO VERIFICADA").replaceAll("_", " ").toUpperCase() === receitaValida);
   }
 
+  // Carteira comercial exclui CNPJ baixado. O painel fiscal continua completo para gestores.
+  clientes = clientes.filter(c => String(c.situacaoEmpresa || "").trim().toUpperCase() !== "BAIXADA");
   const total = clientes.length;
 
   const ativos = clientes.filter(
@@ -269,18 +272,15 @@ export default async function CarteiraPage({
   const reativacao = clientes.filter(
     c => c.situacao === "REATIVACAO"
   ).length;
-
-  const pendentes = clientes.filter(
-    c => c.situacao === "PENDENTE_QUALIFICACAO"
-  ).length;
-
-  const bloqueados = clientes.filter(
-    c => c.bloqueadoFinanceiro
-  ).length;
-
-  const limite = clientes.filter(
-    c => Number(c.limiteDisponivel) > 0
-  ).length;
+  const financeiros = (situacao: "ATIVA" | "REATIVACAO") => {
+    const carteira = clientes.filter(c => c.situacao === situacao);
+    return {
+      bloqueados: carteira.filter(c => c.bloqueadoFinanceiro).length,
+      limite: carteira.filter(c => Number(c.limiteDisponivel) > 0).length,
+    };
+  };
+  const financeiroAtiva = financeiros("ATIVA");
+  const financeiroReativacao = financeiros("REATIVACAO");
 
   const grupos = new Set(
     clientes
@@ -455,14 +455,15 @@ export default async function CarteiraPage({
                       ))}
                   </select>
                 </label>
-
-                <label style={{display: "grid", gap: 6}}>
-                  <span style={{fontSize: 12}}>Situação Receita Federal</span>
-                  <select name="receita" defaultValue={receitaValida} style={{padding: 10, minWidth: 190}}>
-                    <option value="">Todas</option>
-                    {situacoesReceita.map(st => <option key={st} value={st}>{st}</option>)}
-                  </select>
-                </label>
+                {mostrarReceita && (
+                  <label style={{display: "grid", gap: 6}}>
+                    <span style={{fontSize: 12}}>Situação Receita Federal</span>
+                    <select name="receita" defaultValue={receitaValida} style={{padding: 10, minWidth: 190}}>
+                      <option value="">Todas</option>
+                      {situacoesReceita.map(st => <option key={st} value={st}>{st}</option>)}
+                    </select>
+                  </label>
+                )}
 
                 <button type="submit" style={{
                   padding: "11px 18px",
@@ -484,7 +485,7 @@ export default async function CarteiraPage({
               </form>
 
               {/* PAINEL_RECEITA_2027 */}
-              <section style={{background: "#fff", border: "1px solid #e2e8f0", borderRadius: 16, padding: 20, marginBottom: 22}}>
+              {mostrarReceita && (<section style={{background: "#fff", border: "1px solid #e2e8f0", borderRadius: 16, padding: 20, marginBottom: 22}}>
                 <h2 style={{fontSize: 18, marginBottom: 8}}>Situação cadastral — Receita Federal</h2>
                 <p style={{fontSize: 12, color: "#64748b", marginBottom: 15}}>
                   Contagem de clientes por Código Cliente e grupos distintos por Grupo Cliente. Independente da classificação comercial.
@@ -505,7 +506,7 @@ export default async function CarteiraPage({
                 <p style={{marginTop: 15, fontSize: 13, color: "#b91c1c", fontWeight: 700}}>
                   Atenção: {inteiro(riscoReceita)} clientes com CNPJ baixado ou inapto e limite disponível.
                 </p>
-              </section>
+              </section>)}
 
               <div style={{
                 display: "grid",
@@ -519,35 +520,21 @@ export default async function CarteiraPage({
                   `${inteiro(grupos)} grupos distintos`, "#172b4d", "todos", supervisorFiltro, representanteFiltro, gerenteFiltro
                 )}
 
-                {cartao(
-                  "Carteira 01 — Ativa",
-                  inteiro(ativos),
-                  percentual(ativos, total),
-                  "#15803d", "ativa", supervisorFiltro, representanteFiltro, gerenteFiltro)}
-
-                {cartao(
-                  "Carteira 02 — Reativação",
-                  inteiro(reativacao),
-                  percentual(reativacao, total),
-                  "#b45309", "reativacao", supervisorFiltro, representanteFiltro, gerenteFiltro)}
-
-                {cartao(
-                  "Pendentes de qualificação",
-                  inteiro(pendentes),
-                  "Sem última compra válida",
-                  "#7c3aed", "pendentes", supervisorFiltro, representanteFiltro, gerenteFiltro)}
-
-                {cartao(
-                  "Bloqueio financeiro",
-                  inteiro(bloqueados),
-                  "Clientes que exigem atenção",
-                  "#b91c1c", "bloqueados", supervisorFiltro, representanteFiltro, gerenteFiltro)}
-
-                {cartao(
-                  "Com limite disponível",
-                  inteiro(limite),
-                  "Não significa ausência de pedido",
-                  "#0369a1", "limite", supervisorFiltro, representanteFiltro, gerenteFiltro)}
+                {([
+                  { titulo: "Carteira 01 — Ativa", totalCarteira: ativos, situacao: "ativa", cor: "#15803d", finance: financeiroAtiva },
+                  { titulo: "Carteira 02 — Reativação", totalCarteira: reativacao, situacao: "reativacao", cor: "#b45309", finance: financeiroReativacao }
+                ] as const).map(item => (
+                  <div key={item.situacao} style={{display: "grid", gap: 10}}>
+                    {cartao(item.titulo, inteiro(item.totalCarteira), percentual(item.totalCarteira, total), item.cor,
+                      item.situacao, supervisorFiltro, representanteFiltro, gerenteFiltro)}
+                    <div style={{display: "grid", gridTemplateColumns: "repeat(2, minmax(0, 1fr))", gap: 8}}>
+                      {cartao("Bloqueio financeiro", inteiro(item.finance.bloqueados),
+                        "Ver clientes", "#b91c1c", `${item.situacao}_bloqueados`, supervisorFiltro, representanteFiltro, gerenteFiltro)}
+                      {cartao("Com limite disponível", inteiro(item.finance.limite),
+                        "Ver clientes", "#0369a1", `${item.situacao}_limite`, supervisorFiltro, representanteFiltro, gerenteFiltro)}
+                    </div>
+                  </div>
+                ))}
               </div>
 
               <section style={{
@@ -585,11 +572,6 @@ export default async function CarteiraPage({
                     width: `${total ? reativacao / total * 100 : 0}%`,
                     background: "#f59e0b"
                   }} />
-
-                  <div style={{
-                    width: `${total ? pendentes / total * 100 : 0}%`,
-                    background: "#8b5cf6"
-                  }} />
                 </div>
 
                 <div style={{
@@ -601,7 +583,6 @@ export default async function CarteiraPage({
                 }}>
                   <span>🟢 Ativa: {percentual(ativos, total)}</span>
                   <span>🟠 Reativação: {percentual(reativacao, total)}</span>
-                  <span>🟣 Pendente: {inteiro(pendentes)}</span>
                 </div>
               </section>
 

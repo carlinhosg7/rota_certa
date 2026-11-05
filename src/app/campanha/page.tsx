@@ -20,7 +20,7 @@ export default async function CampanhaPage() {
           <h1>Conquiste Sua Amostra 2027</h1>
           <p>Acompanhamento das metas e indicadores da campanha</p>
         </div><div className="profile-pill"><span>{nome}</span><b>{perfil}</b></div></header>
-        <CampanhaClient />
+<CampanhaClient />
       </main>
     </div>
   );

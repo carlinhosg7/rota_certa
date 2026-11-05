@@ -20,8 +20,8 @@ export async function PUT(req: Request, { params }: { params: Promise<{ codigo: 
     // Nunca confiar no codigo/representante enviado pelo navegador.
     const u = usuario as unknown as Record<string, unknown>;
     const papel = String(u.perfil || u.role || "").toUpperCase();
-    const identidade = [u.codigo, u.codrep, u.codigoRepresentante, u.rep, u.usuario].filter(x => x != null).map(x => cleanCode(String(x)));
-    const supervisor = [u.supervisor_codigo, u.supervisor, u.sup].filter(x=>x != null).map(x=>cleanCode(String(x)));
+    const identidade = [u.codigo_representante, u.codigo, u.codrep, u.codigoRepresentante, u.rep].filter(x => x != null).map(x => cleanCode(String(x)));
+    const supervisor = [u.codigo_supervisor, u.supervisor_codigo, u.supervisor, u.sup].filter(x=>x != null).map(x=>cleanCode(String(x)));
     const admin = ["ADMIN", "ADMINISTRADOR"].includes(papel);
     const autorizado = admin || identidade.includes(cleanCode(cliente.rep || "")) || (papel === "SUPERVISOR" && supervisor.includes(cleanCode(cliente.sup || "")));
     if (!autorizado) return NextResponse.json({ erro: "Sem permissão para alterar este cliente. Verifique o mapeamento do usuário." }, { status: 403 });

@@ -53,7 +53,8 @@ export default function Sidebar({ nome, perfil, usuario }: Props) {
   const itens = [
     { titulo: "Visão Comercial", href: "/dashboard#planejamento", rota: "/dashboard" },
     { titulo: "Metas", href: "/metas", rota: "/metas" },
-    { titulo: "Campanha", href: "/campanha", rota: "/campanha" },
+    { titulo: "Campanhas Representantes", href: "/campanha", rota: "/campanha" },
+    { titulo: "Campanhas de Clientes", href: "/campanhas-clientes", rota: "/campanhas-clientes" },
     { titulo: "Share", href: "/share", rota: "/share" },
     { titulo: "Gestão de Atendimentos", href: "/gestao-atendimentos", rota: "/gestao-atendimentos" },
     { titulo: "Venda Mais+", href: "/dashboard#venda-mais", rota: "" },
@@ -122,16 +123,74 @@ export default function Sidebar({ nome, perfil, usuario }: Props) {
             ? pathname === "/dashboard"
             : Boolean(item.rota) &&
               (pathname === item.rota ||
-                pathname.startsWith(item.rota + "/"));
+                (item.rota !== "/campanha" && pathname.startsWith(item.rota + "/")));
 
           return (
-            <Link
+            <div key={item.titulo}>
+              <Link
               key={item.titulo}
               href={item.href}
               style={estiloLink(ativo)}
             >
               {item.titulo}
             </Link>
+              {item.titulo === "Campanhas Clientes" && (
+                <>
+                  <div style={{
+                    marginTop: 4,
+                    padding: "10px 14px 4px",
+                    fontSize: 14,
+                    fontWeight: 700,
+                    color: "#422006"
+                  }}>
+                    Treinamentos
+                  </div>
+                  <Link
+                    href="/campanha/treinamentos"
+                    style={{
+                      ...estiloLink(pathname === "/campanha/treinamentos"),
+                      marginLeft: 22,
+                      paddingLeft: 12,
+                      fontSize: 12,
+                      borderLeft: "2px solid #f97316"
+                    }}
+                  >
+                    {"\u21B3 Treinamento Sa\u00fade e Conforto"}
+                  </Link>
+                  {['ADMIN', 'ADMINISTRADOR', 'DIRETOR', 'GERENTE', 'SUPERVISOR'].includes(perfil.toUpperCase()) && (
+                    <Link href="/campanha/aprovacao"
+                      style={{ ...estiloLink(pathname === '/campanha/aprovacao'), marginLeft: 22, paddingLeft: 12, fontSize: 12, borderLeft: '2px solid #f97316' }}>
+                      {"\u21B3 Aprova\u00E7\u00E3o do Gestor"}
+                    </Link>
+                  )}
+
+                  {(
+                    ["ADMIN", "ADMINISTRADOR"].includes(
+                      perfil.toUpperCase()
+                    ) ||
+                    ["jack.helena", "jessica"].includes(
+                      usuario.trim().toLowerCase()
+                    )
+                  ) && (
+                    <Link
+                      href="/campanha/marketing"
+                      style={{
+                        ...estiloLink(
+                          pathname === "/campanha/marketing"
+                        ),
+                        marginLeft: 22,
+                        paddingLeft: 12,
+                        fontSize: 12,
+                        borderLeft: "2px solid #f97316"
+                      }}
+                    >
+                      {"\u21B3 Feedback do Marketing"}
+                    </Link>
+                  )}
+
+                </>
+              )}
+            </div>
           );
         })}
 

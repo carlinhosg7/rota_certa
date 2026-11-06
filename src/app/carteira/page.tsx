@@ -11,6 +11,7 @@ import Link from "next/link";
 import { validarToken } from "@/lib/auth";
 import Sidebar from "@/components/Sidebar";
 import CartaoTaxaReativacao from "@/components/CartaoTaxaReativacao";
+import CartaoClientesReativados from "@/components/CartaoClientesReativados";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -504,6 +505,7 @@ export default async function CarteiraPage({
                     </Link>;
                   })}
                 </div>
+
                 <p style={{marginTop: 15, fontSize: 13, color: "#b91c1c", fontWeight: 700}}>
                   Atenção: {inteiro(riscoReceita)} clientes com CNPJ baixado ou inapto e limite disponível.
                 </p>
@@ -536,12 +538,25 @@ export default async function CarteiraPage({
                     </div>
                   </div>
                 ))}
+
+              </div>
+
+              {/* Cartoes de reativacao abaixo da carteira */}
+              <div style={{
+                display: "grid",
+                gridTemplateColumns: "repeat(2, minmax(0, 1fr))",
+                gap: 16,
+                marginTop: 20,
+                marginBottom: 24
+              }}>
                 <div style={{minWidth: 0}}>
                   <CartaoTaxaReativacao supervisor={supervisorFiltro} representante={representanteFiltro} supervisoresGrupo={gerenteFiltro ? ([...regionaisGerente].join(",") || "SEM_SUPERVISOR") : ""} />
                 </div>
                 <div style={{minWidth: 0}}>
+                  <CartaoClientesReativados supervisor={supervisorFiltro} representante={representanteFiltro} supervisoresGrupo={gerenteFiltro ? ([...regionaisGerente].join(",") || "SEM_SUPERVISOR") : ""} />
                 </div>
               </div>
+
 
 
               <section style={{

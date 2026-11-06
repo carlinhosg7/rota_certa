@@ -12,7 +12,7 @@ export default function CartaoTaxaReativacao({supervisor,representante,superviso
     return ()=>ctrl.abort();
   },[supervisor,representante,supervisoresGrupo]);
   const n=(v:number)=>v.toLocaleString("pt-BR");
-  return <article style={{marginTop:16,background:"#fff",border:"1px solid #e2e8f0",borderRadius:16,padding:20,maxWidth:390}}>
+  return <article style={{width:"100%",minHeight:180,boxSizing:"border-box",background:"#fff",border:"1px solid #e2e8f0",borderRadius:16,padding:20}}>
     <div style={{color:"#64748b",fontSize:13,fontWeight:700}}>Taxa de reativação — Gestão da Carteira</div>
     <div style={{fontSize:32,fontWeight:800,color:"#15803d",marginTop:8}}>{dados?.disponivel && dados.percentual !== null ? `${dados.percentual.toFixed(2).replace(".",",")}%` : "—"}</div>
     <div style={{fontSize:12,color:"#64748b",marginTop:6}}>{dados?.disponivel ? `${n(dados.reativados ?? 0)} reativados de ${n(dados.elegiveis ?? 0)} clientes elegíveis na base de 27/10/2026` : dados?.motivo ?? "Carregando histórico..."}</div>

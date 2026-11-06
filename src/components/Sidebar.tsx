@@ -59,7 +59,8 @@ export default function Sidebar({ nome, perfil, usuario }: Props) {
     { titulo: "Gestão de Atendimentos", href: "/gestao-atendimentos", rota: "/gestao-atendimentos" },
     { titulo: "Venda Mais+", href: "/dashboard#venda-mais", rota: "" },
     { titulo: "Análise Preditiva", href: "/dashboard#clientes", rota: "" },
-    { titulo: "Gestão de Carteira 2027", href: "/carteira", rota: "/carteira" }
+    { titulo: "Gestão de Carteira 2027", href: "/carteira", rota: "/carteira" },
+    { titulo: "Carteira 02 por Representante", href: "/carteira/por-representante", rota: "/carteira/por-representante" }
   ];
 
   const estiloLink = (ativo: boolean): React.CSSProperties => ({
@@ -256,6 +257,6 @@ export default function Sidebar({ nome, perfil, usuario }: Props) {
         <span>{perfil}</span>
         <button onClick={sair}>Sair</button>
       </div>
-    </aside>
+</aside>
   );
 }

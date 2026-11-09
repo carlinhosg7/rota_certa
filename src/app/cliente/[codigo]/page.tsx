@@ -98,13 +98,43 @@ export default async function ClientePage({ params }: Props) {
     }
 
     if (perfil === "REPRESENTANTE" || perfil === "REP") {
+      // Comparacao por codigo comercial normalizado.
+      // Nao autorizar por regional nem por historico.
+      const normalizarCodigoAcesso = (valor: unknown) =>
+        String(valor ?? "")
+          .trim()
+          .replace(/\\.0+$/, "")
+          .replace(/^0+(?=\\d)/, "");
+
       const reps = await representantesPermitidos(usuario);
 
-      const autorizado = cadastro.representanteAtual?.some(
-        r => reps?.includes(String(r.codigo).trim())
+      const autorizados = new Set(
+        (reps ?? [])
+          .map(normalizarCodigoAcesso)
+          .filter(Boolean)
       );
 
-      if (!autorizado) notFound();
+      const vinculados = (
+        cadastro.representanteAtual ?? []
+      ).map(r => normalizarCodigoAcesso(r.codigo));
+
+      const autorizado = vinculados.some(
+        codigoRep => autorizados.has(codigoRep)
+      );
+
+      if (!autorizado) {
+        console.warn("[ACESSO 360 NEGADO]", {
+          codigoCliente: codigoLimpo,
+          perfil,
+          representantesSessao: [...autorizados],
+          representantesCliente: vinculados,
+          motivo: autorizados.size
+            ? "SEM_VINCULO_COM_REPRESENTANTE"
+            : "SESSAO_SEM_CODIGO_REPRESENTANTE",
+        });
+
+        notFound();
+      }
 
     } else if (perfil === "SUPERVISOR" || perfil === "GERENTE") {
       const regionais = await regionaisPermitidas(usuario);
@@ -664,109 +694,131 @@ const janelaComercial = await calcularJanelaCompraFaturamento(
     ])
   );
 
-  const repAlvoV4 = normalizarRepresentante(
-    cliente.rep, mapaRepresentantes
-  ).codigo;
 
-  const supAlvoV4 = cleanCode(
-    mapaRepresentantes.cadastro.get(repAlvoV4)
-      ?.codigo_supervisor || cliente.sup
+  // V10: escopo real dos representantes atuais.
+  // Nao usar o representante historico unico como filtro.
+  const cadastroAlvoV10 = cadastroV4.get(codigoLimpo);
+
+  const repOficialV10 = (valor: unknown) =>
+    normalizarRepresentante(
+      cleanCode(String(valor ?? "").replace(/^0+(?=\d)/, "")),
+      mapaRepresentantes
+    ).codigo;
+
+  const repsPermitidosSetV10 = new Set(
+    (repsPermitidosV4 ?? []).map(repOficialV10)
   );
 
-  const ufAlvoV4 = String(cliente.uf || "").trim().toUpperCase();
+  const perfilV10 = String(usuario.perfil ?? "")
+    .trim().toUpperCase();
 
-  const candidatosAutorizadosV4 = candidatosSemelhantes.filter(c => {
-    const cad = cadastroV4.get(c.codigo);
-    if (!cad || cad.carteira !== "01_ATIVA") return false;
+  const representanteLogadoV10 =
+    perfilV10 === "REPRESENTANTE" ||
+    perfilV10 === "REP";
+
+  const repsClienteV10 = new Set(
+    (cadastroAlvoV10?.representanteAtual ?? [])
+      .map(r => repOficialV10(r.codigo))
+      .filter(Boolean)
+  );
+
+  if (cliente.rep) {
+    repsClienteV10.add(repOficialV10(cliente.rep));
+  }
+
+  const repsAlvoV10 = new Set(
+    [...repsClienteV10].filter(rep =>
+      nacionalV4 ||
+      repsPermitidosSetV10.has(rep)
+    )
+  );
+
+  const supAlvoV4 = cleanCode(
+    cadastroAlvoV10?.supervisores?.[0]?.codigo ||
+    cliente.sup ||
+    ""
+  );
+
+  const ufAlvoV4 = String(
+    cadastroAlvoV10?.uf || cliente.uf || ""
+  ).trim().toUpperCase();
+
+  const perfilScoreV10 = new Map(
+    candidatosSemelhantes.map(c => [
+      c.codigo,
+      c.scoreSimilaridade
+    ])
+  );
+
+  const representantesAtuaisV10 = (
+    cad: (typeof carteiraComparacao2027.clientes)[number]
+  ) => (cad.representanteAtual ?? [])
+    .map(r => repOficialV10(r.codigo))
+    .filter(Boolean);
+
+  const supDoRepV10 = (rep: string) => cleanCode(
+    mapaRepresentantes.cadastro.get(rep)
+      ?.codigo_supervisor || ""
+  );
+
+  const permitidoV10 = (
+    cad: (typeof carteiraComparacao2027.clientes)[number]
+  ) => {
+    const reps = representantesAtuaisV10(cad);
+
     if (nacionalV4) return true;
 
-    return cad.representanteAtual.some(r => {
-      const rep = normalizarRepresentante(
-        cleanCode(r.codigo), mapaRepresentantes
-      ).codigo;
-
-      const sup = cleanCode(
-        mapaRepresentantes.cadastro.get(rep)?.codigo_supervisor
+    if (representanteLogadoV10) {
+      return reps.some(rep =>
+        repsPermitidosSetV10.has(rep)
       );
+    }
 
-      return (
-        repsPermitidosV4 !== null &&
-        repsPermitidosV4.includes(rep) &&
-        (regionaisPermitidasV4 === null ||
-         regionaisPermitidasV4.has(sup))
-      );
-    });
-  });
-
-
-  // Vinculos comerciais oficiais e historicos, sem
-  // depender exclusivamente de uma unica coluna.
-  const pertenceRepV6 = (
-    codigoCliente: string,
-    representante: string
-  ) => {
-    const cad = cadastroV4.get(codigoCliente);
-    const comercial = carteiraPorCodigo.get(codigoCliente);
-
-    if (!cad) return false;
-
-    const reps = [
-      ...cad.representanteAtual,
-      ...cad.representantes,
-    ].map(r => normalizarRepresentante(
-      cleanCode(r.codigo), mapaRepresentantes
-    ).codigo);
-
-    return (
-      reps.includes(representante) ||
-      normalizarRepresentante(
-        cleanCode(comercial?.rep),
-        mapaRepresentantes
-      ).codigo === representante
+    return reps.some(rep =>
+      repsPermitidosSetV10.has(rep) &&
+      (
+        regionaisPermitidasV4 === null ||
+        regionaisPermitidasV4.has(supDoRepV10(rep))
+      )
     );
   };
 
-  const pertenceRegionalV6 = (
-    codigoCliente: string,
-    supervisor: string
-  ) => {
-    const cad = cadastroV4.get(codigoCliente);
-    const comercial = carteiraPorCodigo.get(codigoCliente);
+  // Fonte principal: clientes ativos no snapshot vigente.
+  // Perfil historico e usado apenas para ordenacao.
+  const candidatosAutorizadosV4 =
+    carteiraComparacao2027.clientes
+      .filter(cad => {
+        const cod = cleanCode(cad.codigoCliente);
 
-    if (!cad) return false;
-
-    const supervisores = new Set(
-      cad.supervisores.map(s => cleanCode(s.codigo))
-    );
-
-    if (comercial?.sup) {
-      supervisores.add(cleanCode(comercial.sup));
-    }
-
-    for (const r of [
-      ...cad.representanteAtual,
-      ...cad.representantes,
-    ]) {
-      const oficial = normalizarRepresentante(
-        cleanCode(r.codigo), mapaRepresentantes
+        return (
+          Boolean(cod) &&
+          cod !== codigoLimpo &&
+          cad.carteira === "01_ATIVA" &&
+          String(cad.situacaoEmpresa ?? "")
+            .toUpperCase() !== "BAIXADA" &&
+          permitidoV10(cad)
+        );
+      })
+      .map(cad => ({
+        codigo: cleanCode(cad.codigoCliente),
+        scoreSimilaridade:
+          perfilScoreV10.get(cleanCode(cad.codigoCliente)) ?? 0,
+        vendas: [] as Venda[],
+      }))
+      .sort((a, b) =>
+        b.scoreSimilaridade - a.scoreSimilaridade
       );
-
-      if (oficial.supervisor) {
-        supervisores.add(cleanCode(oficial.supervisor));
-      }
-    }
-
-    return supervisores.has(supervisor);
-  };
 
   const gruposPotencialV4 = [
     {
       id: "carteira",
       titulo: "Minha carteira",
       descricao: "Clientes ativos do mesmo representante",
-      clientes: candidatosAutorizadosV4.filter(c =>
-        pertenceRepV6(c.codigo, repAlvoV4)
-      ).slice(0, 80),
+      clientes: candidatosAutorizadosV4.filter(c => {
+        const cad = cadastroV4.get(c.codigo);
+        return cad && representantesAtuaisV10(cad)
+          .some(rep => repsAlvoV10.has(rep));
+      }).slice(0, 80),
     },
     {
       id: "estado",
@@ -774,24 +826,43 @@ const janelaComercial = await calcularJanelaCompraFaturamento(
       descricao: "Clientes ativos da UF " + ufAlvoV4,
       clientes: candidatosAutorizadosV4.filter(c => {
         const cad = cadastroV4.get(c.codigo);
-        const comercial = carteiraPorCodigo.get(c.codigo);
-
-        const uf = String(
-          cad?.uf || comercial?.uf || ""
-        ).trim().toUpperCase();
-
-        return Boolean(ufAlvoV4) && uf === ufAlvoV4;
+        return Boolean(
+          ufAlvoV4 &&
+          String(cad?.uf || "")
+            .trim().toUpperCase() === ufAlvoV4
+        );
       }).slice(0, 80),
     },
     {
       id: "regional",
       titulo: "Minha regional",
       descricao: "Clientes ativos da regional " + supAlvoV4,
-      clientes: candidatosAutorizadosV4.filter(c =>
-        pertenceRegionalV6(c.codigo, supAlvoV4)
-      ).slice(0, 80),
+      clientes: candidatosAutorizadosV4.filter(c => {
+        const cad = cadastroV4.get(c.codigo);
+        return Boolean(
+          cad &&
+          supAlvoV4 &&
+          representantesAtuaisV10(cad).some(rep =>
+            supDoRepV10(rep) === supAlvoV4
+          )
+        );
+      }).slice(0, 80),
     },
   ];
+
+  console.log("[POTENCIAL V10 AMOSTRA]", {
+    cliente: codigoLimpo,
+    perfil: perfilV10,
+    repsCliente: [...repsClienteV10],
+    repsPermitidos: nacionalV4
+      ? ["ACESSO_GLOBAL"]
+      : [...repsPermitidosSetV10],
+    repsComparacao: [...repsAlvoV10],
+    autorizados: candidatosAutorizadosV4.length,
+    carteira: gruposPotencialV4[0].clientes.length,
+    estado: gruposPotencialV4[1].clientes.length,
+    regional: gruposPotencialV4[2].clientes.length,
+  });
 
   const codigosExtrasV4 = [...new Set(
     gruposPotencialV4.flatMap(g =>

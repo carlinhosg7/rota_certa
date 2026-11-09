@@ -14,7 +14,7 @@ import Sidebar from "@/components/Sidebar";
 
 import CartaoTaxaReativacao from "@/components/CartaoTaxaReativacao";
 import FiltrosRegionalRepresentante from "@/components/FiltrosRegionalRepresentante";
-import representantesOficiais from "@/lib/representantes-oficiais-2026.json";
+import { carregarMapaRepresentantes } from "@/lib/representantes-oficiais";
 import CartaoClientesReativados from "@/components/CartaoClientesReativados";
 
 export const runtime = "nodejs";
@@ -203,7 +203,32 @@ export default async function CarteiraPage({
       : null;
 
   const repsEscopo = await representantesPermitidos(sessao);
-  const oficiais = representantesOficiais.representantes;
+  // Cadastro oficial em tempo de consulta, sem JSON estatico.
+  const mapaRepresentantes = await carregarMapaRepresentantes();
+
+  const aliasesPorAtual = new Map<string, string[]>();
+
+  for (const [antigo, atual] of mapaRepresentantes.dePara) {
+    // Codigos vigentes nunca podem ser substituidos pelo De/Para.
+    if (mapaRepresentantes.cadastro.has(antigo)) continue;
+
+    const lista = aliasesPorAtual.get(atual) ?? [];
+    lista.push(antigo);
+    aliasesPorAtual.set(atual, lista);
+  }
+
+  const oficiais = [...mapaRepresentantes.cadastro.values()]
+    .filter(r => r.ativo)
+    .map(r => {
+      const codigoAtual = codigo(r.codigo_rep);
+
+      return {
+        codigo: codigoAtual,
+        nome: r.nome_rep || codigoAtual,
+        supervisor_codigo: codigo(r.codigo_supervisor),
+        aliases_utilizaveis: aliasesPorAtual.get(codigoAtual) ?? [],
+      };
+    });
   const repsAtivosVisiveis = oficiais.filter(r =>
     (regionaisEscopo === null || regionaisEscopo.has(r.supervisor_codigo)) &&
     (repsEscopo === null || [r.codigo, ...r.aliases_utilizaveis].some(id => repsEscopo.includes(id))) &&

@@ -1,6 +1,11 @@
 import { cookies } from "next/headers";
 import { redirect } from "next/navigation";
 import { validarToken } from "@/lib/auth";
+import {
+  acessoGlobal,
+  regionaisPermitidas,
+  representantesPermitidos,
+} from "@/lib/escopo-acesso";
 import { supabase } from "@/lib/supabase";
 import { carregarCarteira2027 } from "@/lib/carteira-2027-data";
 import { carregarMapaRepresentantes, normalizarRepresentante } from "@/lib/representantes-oficiais";
@@ -84,10 +89,30 @@ export default async function PaginaGestaoReativacao() {
     return { representantes, supervisores };
   };
 
+  // A hierarquia visivel deve respeitar a permissao real da sessao.
+  const [repsPermitidos, regionaisAutorizadas] = await Promise.all([
+    representantesPermitidos(sessao),
+    (perfil === "REPRESENTANTE" || perfil === "REP")
+      ? Promise.resolve(null)
+      : regionaisPermitidas(sessao),
+  ]);
+
+  const nacional = acessoGlobal(sessao);
+
+  const repsEscopo = repsPermitidos === null
+    ? null
+    : new Set(repsPermitidos.map(codigo));
+
   const cadastroAutorizado = [...mapaOficial.cadastro.values()]
     .filter(r => r.ativo)
-    .filter(r => perfil !== "REPRESENTANTE" || codigo(r.codigo_rep) === codigo(rep))
-    .filter(r => perfil !== "SUPERVISOR" || codigo(r.codigo_supervisor) === codigo(sup));
+    .filter(r =>
+      repsEscopo === null ||
+      repsEscopo.has(codigo(r.codigo_rep))
+    )
+    .filter(r =>
+      regionaisAutorizadas === null ||
+      regionaisAutorizadas.has(codigo(r.codigo_supervisor))
+    );
 
   const supervisoresOficiais = [...new Map(cadastroAutorizado.map(r => [
     codigo(r.codigo_supervisor),
@@ -101,23 +126,55 @@ export default async function PaginaGestaoReativacao() {
     supervisor: codigo(r.codigo_supervisor),
   })).sort((a, b) => a.nome.localeCompare(b.nome, "pt-BR"));
 
+  const vinculosVisiveis = (
+    cliente: (typeof carteira.clientes)[number]
+  ) => {
+    const oficiais = vinculos(cliente);
+
+    const representantes = oficiais.representantes.filter(c => {
+      const cadastro = mapaOficial.cadastro.get(c);
+      if (!cadastro?.ativo) return false;
+
+      if (nacional) return true;
+
+      if (repsEscopo === null || !repsEscopo.has(c)) {
+        return false;
+      }
+
+      const supervisor = codigo(cadastro.codigo_supervisor);
+
+      return (
+        regionaisAutorizadas === null ||
+        regionaisAutorizadas.has(supervisor)
+      );
+    });
+
+    const supervisores = [...new Set(
+      representantes
+        .map(c => codigo(
+          mapaOficial.cadastro.get(c)?.codigo_supervisor
+        ))
+        .filter(Boolean)
+    )];
+
+    return { representantes, supervisores };
+  };
+
   const clientes = carteira.clientes.filter(cliente => {
     if (cliente.situacao !== "REATIVACAO") return false;
     if (cliente.situacaoEmpresa === "BAIXADA") return false;
 
-    if (["ADMIN", "ADMINISTRADOR", "GERENTE"].includes(perfil)) {
-      return true;
+    // Somente usuarios de acesso nacional recebem a carteira completa.
+    if (nacional) return true;
+
+    // Gerentes, supervisores e representantes:
+    // verificar os vinculos atuais, nunca apenas o perfil.
+    if (repsEscopo === null || repsEscopo.size === 0) {
+      return false;
     }
 
-    if (perfil === "REPRESENTANTE") {
-      return Boolean(rep) && vinculos(cliente).representantes.includes(codigo(rep));
-    }
-
-    if (perfil === "SUPERVISOR") {
-      return Boolean(sup) && vinculos(cliente).supervisores.includes(codigo(sup));
-    }
-
-    return false;
+    const autorizados = vinculosVisiveis(cliente);
+    return autorizados.representantes.length > 0;
   });
 
   const registros = await carregarGestao();
@@ -125,7 +182,7 @@ export default async function PaginaGestaoReativacao() {
 
   const linhas = clientes.map(cliente => {
     const registro = mapa.get(texto(cliente.codigoCliente));
-    const oficiais = vinculos(cliente);
+    const oficiais = vinculosVisiveis(cliente);
 
     return {
       codigo: texto(cliente.codigoCliente),

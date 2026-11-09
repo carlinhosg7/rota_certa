@@ -17,6 +17,7 @@ import { validarToken } from "@/lib/auth";
 import { acessoGlobal, regionaisPermitidas, representantesPermitidos } from "@/lib/escopo-acesso";
 import { notFound } from "next/navigation";
 import ResultadoAtendimento from "@/components/ResultadoAtendimento";
+import ProdutosPotencialAbas from "@/components/ProdutosPotencialAbas";
 import GestaoReativacao from "@/components/GestaoReativacao";
 import ExportarCliente360PDF from "@/components/ExportarCliente360PDF";
 import ClassificacaoCliente from "@/components/ClassificacaoCliente";
@@ -650,6 +651,289 @@ const janelaComercial = await calcularJanelaCompraFaturamento(
   // ============================================================
   // DICIONÁRIO OFICIAL: REFERÊNCIA -> NOME
   // ============================================================
+
+
+  // Motor V4: tres universos independentes, com permissao comercial.
+  const repsPermitidosV4 = await representantesPermitidos(usuario);
+  const regionaisPermitidasV4 = await regionaisPermitidas(usuario);
+  const nacionalV4 = acessoGlobal(usuario);
+
+  const cadastroV4 = new Map(
+    carteiraComparacao2027.clientes.map(c => [
+      cleanCode(c.codigoCliente), c
+    ])
+  );
+
+  const repAlvoV4 = normalizarRepresentante(
+    cliente.rep, mapaRepresentantes
+  ).codigo;
+
+  const supAlvoV4 = cleanCode(
+    mapaRepresentantes.cadastro.get(repAlvoV4)
+      ?.codigo_supervisor || cliente.sup
+  );
+
+  const ufAlvoV4 = String(cliente.uf || "").trim().toUpperCase();
+
+  const candidatosAutorizadosV4 = candidatosSemelhantes.filter(c => {
+    const cad = cadastroV4.get(c.codigo);
+    if (!cad || cad.carteira !== "01_ATIVA") return false;
+    if (nacionalV4) return true;
+
+    return cad.representanteAtual.some(r => {
+      const rep = normalizarRepresentante(
+        cleanCode(r.codigo), mapaRepresentantes
+      ).codigo;
+
+      const sup = cleanCode(
+        mapaRepresentantes.cadastro.get(rep)?.codigo_supervisor
+      );
+
+      return (
+        repsPermitidosV4 !== null &&
+        repsPermitidosV4.includes(rep) &&
+        (regionaisPermitidasV4 === null ||
+         regionaisPermitidasV4.has(sup))
+      );
+    });
+  });
+
+
+  // Vinculos comerciais oficiais e historicos, sem
+  // depender exclusivamente de uma unica coluna.
+  const pertenceRepV6 = (
+    codigoCliente: string,
+    representante: string
+  ) => {
+    const cad = cadastroV4.get(codigoCliente);
+    const comercial = carteiraPorCodigo.get(codigoCliente);
+
+    if (!cad) return false;
+
+    const reps = [
+      ...cad.representanteAtual,
+      ...cad.representantes,
+    ].map(r => normalizarRepresentante(
+      cleanCode(r.codigo), mapaRepresentantes
+    ).codigo);
+
+    return (
+      reps.includes(representante) ||
+      normalizarRepresentante(
+        cleanCode(comercial?.rep),
+        mapaRepresentantes
+      ).codigo === representante
+    );
+  };
+
+  const pertenceRegionalV6 = (
+    codigoCliente: string,
+    supervisor: string
+  ) => {
+    const cad = cadastroV4.get(codigoCliente);
+    const comercial = carteiraPorCodigo.get(codigoCliente);
+
+    if (!cad) return false;
+
+    const supervisores = new Set(
+      cad.supervisores.map(s => cleanCode(s.codigo))
+    );
+
+    if (comercial?.sup) {
+      supervisores.add(cleanCode(comercial.sup));
+    }
+
+    for (const r of [
+      ...cad.representanteAtual,
+      ...cad.representantes,
+    ]) {
+      const oficial = normalizarRepresentante(
+        cleanCode(r.codigo), mapaRepresentantes
+      );
+
+      if (oficial.supervisor) {
+        supervisores.add(cleanCode(oficial.supervisor));
+      }
+    }
+
+    return supervisores.has(supervisor);
+  };
+
+  const gruposPotencialV4 = [
+    {
+      id: "carteira",
+      titulo: "Minha carteira",
+      descricao: "Clientes ativos do mesmo representante",
+      clientes: candidatosAutorizadosV4.filter(c =>
+        pertenceRepV6(c.codigo, repAlvoV4)
+      ).slice(0, 80),
+    },
+    {
+      id: "estado",
+      titulo: "Meu estado",
+      descricao: "Clientes ativos da UF " + ufAlvoV4,
+      clientes: candidatosAutorizadosV4.filter(c => {
+        const cad = cadastroV4.get(c.codigo);
+        const comercial = carteiraPorCodigo.get(c.codigo);
+
+        const uf = String(
+          cad?.uf || comercial?.uf || ""
+        ).trim().toUpperCase();
+
+        return Boolean(ufAlvoV4) && uf === ufAlvoV4;
+      }).slice(0, 80),
+    },
+    {
+      id: "regional",
+      titulo: "Minha regional",
+      descricao: "Clientes ativos da regional " + supAlvoV4,
+      clientes: candidatosAutorizadosV4.filter(c =>
+        pertenceRegionalV6(c.codigo, supAlvoV4)
+      ).slice(0, 80),
+    },
+  ];
+
+  const codigosExtrasV4 = [...new Set(
+    gruposPotencialV4.flatMap(g =>
+      g.clientes.map(c => c.codigo)
+    )
+  )].filter(c => !mapaVendasSemelhantes.has(c));
+
+  const extrasV4 = await buscarVendasClientes360(codigosExtrasV4);
+
+  const vendasPorClienteV4 = new Map([
+    ...mapaVendasSemelhantes,
+    ...extrasV4,
+  ]);
+
+  const corteV4 = new Date();
+  corteV4.setDate(corteV4.getDate() - 180);
+
+  const linhasCompradasV4 = new Set(
+    vendasCliente.map(v =>
+      normalizarLinha360(v.codigoLinha)
+    ).filter(Boolean)
+  );
+
+  const linhasOficiaisV4 = new Map(
+    produtosAutorizados.map(p => [
+      normalizarLinha360(p.codigoLinha), p
+    ] as const)
+  );
+
+  function medianaV4(valores: number[]) {
+    if (!valores.length) return 0;
+    const v = [...valores].sort((a, b) => a - b);
+    const i = Math.floor(v.length / 2);
+    return v.length % 2 ? v[i] : (v[i - 1] + v[i]) / 2;
+  }
+
+  const abasPotencialV4 = gruposPotencialV4.map(grupo => {
+    type Linha = {
+      codigo: string;
+      nome: string;
+      compradores: Map<string, { pares: number; valor: number }>;
+      referencias: Map<string, Set<string>>;
+    };
+
+    const linhas = new Map<string, Linha>();
+
+    for (const candidato of grupo.clientes) {
+      const vendas = vendasPorClienteV4.get(candidato.codigo) ?? [];
+
+      for (const v of vendas) {
+        if (v.qtd <= 0) continue;
+
+        const cod = normalizarLinha360(v.codigoLinha);
+        if (!cod || !linhasAtivas360.has(cod)) continue;
+
+        if (
+          cod !== linhaPlay360 &&
+          linhasCompradasV4.has(cod)
+        ) continue;
+
+        const oficial = linhasOficiaisV4.get(cod);
+        const item = linhas.get(cod) ?? {
+          codigo: oficial?.codigoLinha || v.codigoLinha,
+          nome: oficial?.linha || v.linha || `Linha ${cod}`,
+          compradores: new Map<
+            string, { pares: number; valor: number }
+          >(),
+          referencias: new Map<string, Set<string>>(),
+        };
+
+        const anterior = item.compradores.get(candidato.codigo)
+          ?? { pares: 0, valor: 0 };
+
+        anterior.pares += v.qtd;
+        anterior.valor += v.vlr || 0;
+
+        item.compradores.set(candidato.codigo, anterior);
+
+        const ref = cleanReferencia(v.referencia);
+
+        if (ref && refsAtivas360.has(ref)) {
+          const clientesRef = item.referencias.get(ref)
+            ?? new Set<string>();
+
+          clientesRef.add(candidato.codigo);
+          item.referencias.set(ref, clientesRef);
+        }
+
+        linhas.set(cod, item);
+      }
+    }
+
+    const produtos = [...linhas.entries()].map(([cod, item]) => ({
+      codigoLinha: item.codigo,
+      linha: item.nome,
+      play: cod === linhaPlay360,
+      jaCompra: linhasCompradasV4.has(cod),
+      clientes: item.compradores.size,
+      percentual: grupo.clientes.length
+        ? 100 * item.compradores.size / grupo.clientes.length
+        : 0,
+      medianaPares: medianaV4(
+        [...item.compradores.values()].map(x => x.pares)
+      ),
+      medianaValor: medianaV4(
+        [...item.compradores.values()].map(x => x.valor)
+      ),
+      referencias: [...item.referencias.entries()]
+        .sort((a, b) => b[1].size - a[1].size)
+        .slice(0, 5).map(([ref]) => ref),
+    }))
+    .filter(p => p.clientes >= 1 || p.play)
+    .sort((a, b) =>
+      b.percentual - a.percentual || b.clientes - a.clientes
+    );
+
+    const playEncontrada = produtos.find(p => p.play);
+    const playOficial = linhasOficiaisV4.get(linhaPlay360);
+
+    const play = playEncontrada ?? {
+      codigoLinha: playOficial?.codigoLinha || "007",
+      linha: playOficial?.linha || "TENIS KIDY PLAY RESPITEC",
+      play: true,
+      jaCompra: linhasCompradasV4.has(linhaPlay360),
+      clientes: 0,
+      percentual: 0,
+      medianaPares: 0,
+      medianaValor: 0,
+      referencias: [] as string[],
+    };
+
+    return {
+      id: grupo.id,
+      titulo: grupo.titulo,
+      descricao: grupo.descricao,
+      amostra: grupo.clientes.length,
+      produtos: [
+        play,
+        ...produtos.filter(p => !p.play)
+      ].slice(0, 8),
+    };
+  });
 
   const nomeReferenciaPorRef = new Map(
     nomesReferencias.map((p) => [cleanReferencia(p.referencia), p])
@@ -1659,93 +1943,8 @@ const janelaComercial = await calcularJanelaCompraFaturamento(
         )}
 
         {!encerrada && <>
-        {/* PRODUTOS COM POTENCIAL */}
-        <section style={styles.bloco}>
-          <div style={styles.blocoTitulo}>
-            <span style={styles.numeroSecao}>03</span>
-            Produtos com potencial
-          </div>
-
-          <div style={styles.similarResumo}>
-            Comparação com <strong>{grupoSimilar.length}</strong> clientes da {origemComparacao},
-            considerando porte histórico, volume, frequência e amplitude de mix.
-          </div>
-
-          {produtosPotenciais.length ? (
-            <div style={styles.potenciaisGrid}>
-              {produtosPotenciais.map((p) => (
-                <div key={p.chave} style={styles.potencialCard}>
-                  <div style={styles.oportunidadeTopo}>
-                    <div>
-                      <div style={styles.oportunidadeLinha}>{p.linha}</div>
-                      {normalizarLinha360(p.codigoLinha) === linhaPlay360 &&
-                        <div style={{fontSize: 11, fontWeight: 800, color: "#b45309", marginTop: 5}}>★ PLAY — PRIORIDADE KIDY</div>}
-                      {p.codigoLinha && <div style={styles.linhaCodigo}>Cód. {p.codigoLinha}</div>}
-                    </div>
-                    <div style={{
-                      ...styles.badge,
-                      ...(p.potencial === "ALTO"
-                        ? styles.badgeAlto
-                        : p.potencial === "BAIXO"
-                        ? styles.badgeBaixo
-                        : styles.badgeMedio)
-                    }}>
-                      {p.potencial}
-                    </div>
-                  </div>
-
-                  <div style={styles.penetracaoNumero}>{p.clientes.size ? `${p.penetracao.toFixed(0)}%` : "—"}</div>
-                  <div style={styles.penetracaoLegenda}>
-                    {normalizarLinha360(p.codigoLinha) === linhaPlay360
-                      ? "Linha PLAY obrigatória na abordagem comercial. Repor ou ampliar o mix, conforme histórico."
-                      : p.clientes.size ? "dos clientes semelhantes compram esta linha" : "Sem amostra semelhante suficiente"}
-                  </div>
-
-                  <div style={styles.potencialMetricas}>
-                    <div>
-                      <span>Clientes</span>
-                      <strong>{p.clientes.size}</strong>
-                    </div>
-                    <div>
-                      <span>Mediana pares</span>
-                      <strong>{numero(p.paresMedianos)}</strong>
-                    </div>
-                    <div>
-                      <span>Mediana valor</span>
-                      <strong>{moeda(p.valorMediano)}</strong>
-                    </div>
-                  </div>
-
-                  {(referenciasAtuaisPorLinha.get(p.codigoLinha || p.linha) || []).length > 0 ? (
-                    <div style={styles.refsPotenciais}>
-                      <span>Referências autorizadas com venda recente:</span>
-                      <strong>
-                        {(referenciasAtuaisPorLinha.get(p.codigoLinha || p.linha) || [])
-                          .slice(0, 5)
-                          .map((r) => r.referencia)
-                          .join(" • ")}
-                      </strong>
-                    </div>
-                  ) : (
-                    <div style={styles.refsPotenciais}>
-                      <span>Referências:</span>
-                      <strong>Nenhuma referência autorizada com venda recente encontrada.</strong>
-                    </div>
-                  )}
-                </div>
-              ))}
-            </div>
-          ) : (
-            <div style={styles.vazio}>
-              Não encontrei linhas novas com evidência suficiente entre os clientes semelhantes.
-            </div>
-          )}
-
-          <div style={styles.metodologia}>
-            Esta recomendação é baseada em similaridade histórica e penetração de mix.
-            Não representa uma probabilidade estatística de compra.
-          </div>
-        </section>
+        {/* PRODUTOS COM POTENCIAL - MOTOR V4 */}
+        <ProdutosPotencialAbas abas={abasPotencialV4} />
 
         {/* RESULTADO DO ATENDIMENTO */}
         <GestaoReativacao codigoCliente={cliente.codigo} razaoSocial={razaoSocial360} cnpj={cadastro2027?.cnpj ?? ""} />

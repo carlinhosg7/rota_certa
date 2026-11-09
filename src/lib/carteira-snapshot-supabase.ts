@@ -1,6 +1,7 @@
 import "server-only";
 import { randomUUID } from "node:crypto";
 import type { ClienteCarteira } from "./carteira-2027-data";
+import { listarClientesExcluidos } from "./clientes-excluidos";
 
 type Carteira = {
   clientes: ClienteCarteira[];
@@ -296,8 +297,20 @@ export async function lerSnapshotCarteira(): Promise<Carteira> {
     );
   }
 
+  const excluidos = await listarClientesExcluidos();
+  const clientesVisiveis = clientes.filter(c =>
+    !excluidos.has(String(c.codigoCliente).trim().replace(/\.0+$/, ""))
+  );
+  const grupos = new Set(clientesVisiveis.map(c => c.grupoCliente?.trim()).filter(Boolean));
   return {
-    clientes,
-    resumo: meta.resumo,
+    clientes: clientesVisiveis,
+    resumo: {
+      ...meta.resumo,
+      totalClientes: clientesVisiveis.length,
+      gruposDistintos: grupos.size,
+      ativa: clientesVisiveis.filter(c => c.carteira === "01_ATIVA").length,
+      reativacao: clientesVisiveis.filter(c => c.carteira === "02_REATIVACAO").length,
+      excluidosDaCarteira: clientes.length - clientesVisiveis.length,
+    },
   };
 }

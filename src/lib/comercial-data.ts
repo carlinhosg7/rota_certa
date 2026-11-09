@@ -1,3 +1,4 @@
+import { listarClientesExcluidos } from "./clientes-excluidos";
 import fs from "fs";
 import {
   carregarMapaRepresentantes,
@@ -419,7 +420,8 @@ async function carregarCarteiraBase(): Promise<Carteira[]> {
     `[CARTEIRA] ${by.size.toLocaleString("pt-BR")} registros válidos carregados.`
   );
 
-  return [...by.values()];
+  const excluidos = await listarClientesExcluidos();
+  return [...by.values()].filter(c => !excluidos.has(cleanCode(c.codigo)));
 }
 
 async function carregarFinanceiro() {

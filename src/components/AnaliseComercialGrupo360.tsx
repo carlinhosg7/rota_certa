@@ -1,4 +1,5 @@
 import "server-only";
+import ProdutosPotencialAbas from "@/components/ProdutosPotencialAbas";
 import { buscarVendasClientes360 } from "@/lib/visao360-supabase";
 import { calcularJanelaCompraFaturamento } from "@/lib/janela-compra-faturamento";
 import { carregarCarteiraOficial360, cleanCode, cleanReferencia } from "@/lib/comercial-data";
@@ -9,6 +10,7 @@ type Venda360 = {
   codigoLinha: string; linha: string; referencia: string;
 };
 type ClienteComparacao = {
+  uf?: string;
   codigoCliente?: string | number; situacao?: string; carteira?: string;
   situacaoEmpresa?: string; representanteAtual?: { codigo: string }[];
   supervisores?: { codigo: string }[];
@@ -80,84 +82,311 @@ export default async function AnaliseComercialGrupo360({ vendas, clientesGrupo, 
     </section>;
   }
 
-  // Amostra regional: apenas clientes ATIVOS que não pertencem ao grupo.
-  // Usa primeiro o representante predominante; caso a amostra seja pequena, a regional.
-  const grupoCodigos = new Set(clientesGrupo.map(c => cleanCode(String(c.codigoCliente ?? ""))));
-  const contagem = (campo: "representanteAtual" | "supervisores") => {
-    const mapa = new Map<string, number>();
-    for (const c of clientesGrupo) for (const r of c[campo] || []) mapa.set(String(r.codigo), (mapa.get(String(r.codigo)) || 0) + 1);
-    return [...mapa].sort((a,b)=>b[1]-a[1])[0]?.[0];
-  };
-  const rep = contagem("representanteAtual");
-  const sup = contagem("supervisores");
-  const elegivel = (c: ClienteComparacao) =>
-    !grupoCodigos.has(cleanCode(String(c.codigoCliente ?? ""))) &&
-    String(c.situacaoEmpresa ?? "").toUpperCase() !== "BAIXADA" &&
-    (c.situacao === "ATIVA" || c.carteira === "01_ATIVA");
-  const ativos = clientesCarteira.filter(elegivel);
-  const porRep = rep ? ativos.filter(c => c.representanteAtual?.some(r => String(r.codigo) === rep)) : [];
-  const porRegional = sup ? ativos.filter(c => c.supervisores?.some(r => String(r.codigo) === sup)) : [];
-  const candidatos = (porRep.length >= 10 ? porRep : porRegional).slice(0, 40);
-  const grupoAmostra = porRep.length >= 10 ? "representante" : "regional";
-  const codigos = candidatos.map(c => cleanCode(String(c.codigoCliente ?? ""))).filter(Boolean);
-  const vendasComparacao = codigos.length ? await buscarVendasClientes360(codigos) : new Map<string, Venda360[]>();
 
-  // Só apresentar referências constantes da base oficial autorizada.
-  const { produtosAutorizados } = await carregarCarteiraOficial360();
-  const linhasAutorizadas = new Set(produtosAutorizados.map(p=>norm(p.codigoLinha)));
-  const refsPorLinha = new Map<string, Set<string>>();
+  // MOTOR POR GRUPO V8
+  // A comparacao exclui todas as empresas do grupo.
+  // Utiliza apenas a carteira recebida da pagina,
+  // que ja foi restringida por permissao comercial.
+
+  const codigosGrupoV8 = new Set(
+    clientesGrupo
+      .map(c => cleanCode(String(c.codigoCliente ?? "")))
+      .filter(Boolean)
+  );
+
+  const contarVinculosV8 = (
+    campo: "representanteAtual" | "supervisores"
+  ) => {
+    const contagens = new Map<string, number>();
+
+    for (const c of clientesGrupo) {
+      for (const pessoa of c[campo] ?? []) {
+        const id = norm(pessoa.codigo);
+        if (!id) continue;
+        contagens.set(
+          id,
+          (contagens.get(id) ?? 0) + 1
+        );
+      }
+    }
+
+    return [...contagens.entries()]
+      .sort((a, b) => b[1] - a[1])[0]?.[0] ?? "";
+  };
+
+  const repV8 = contarVinculosV8("representanteAtual");
+  const supV8 = contarVinculosV8("supervisores");
+
+  const contagemUFV8 = new Map<string, number>();
+
+  for (const c of clientesGrupo) {
+    const uf = String(c.uf ?? "").trim().toUpperCase();
+    if (!uf) continue;
+
+    contagemUFV8.set(
+      uf,
+      (contagemUFV8.get(uf) ?? 0) + 1
+    );
+  }
+
+  const ufV8 = [...contagemUFV8.entries()]
+    .sort((a, b) => b[1] - a[1])[0]?.[0] ?? "";
+
+  const ativosV8 = clientesCarteira.filter(c => {
+    const codigo = cleanCode(String(c.codigoCliente ?? ""));
+
+    return (
+      Boolean(codigo) &&
+      !codigosGrupoV8.has(codigo) &&
+      String(c.situacaoEmpresa ?? "").toUpperCase() !== "BAIXADA" &&
+      (
+        c.carteira === "01_ATIVA" ||
+        c.situacao === "ATIVA"
+      )
+    );
+  });
+
+  const limiteV8 = 80;
+
+  const universosV8 = [
+    {
+      id: "carteira",
+      titulo: "Minha carteira",
+      descricao:
+        "Clientes ativos do representante " + (repV8 || "sem vinculo"),
+      clientes: ativosV8.filter(c =>
+        Boolean(repV8) &&
+        (c.representanteAtual ?? []).some(r =>
+          norm(r.codigo) === repV8
+        )
+      ).slice(0, limiteV8),
+    },
+    {
+      id: "estado",
+      titulo: "Meu estado",
+      descricao:
+        "Clientes ativos da UF " + (ufV8 || "nao informada"),
+      clientes: ativosV8.filter(c =>
+        Boolean(ufV8) &&
+        String(c.uf ?? "").trim().toUpperCase() === ufV8
+      ).slice(0, limiteV8),
+    },
+    {
+      id: "regional",
+      titulo: "Minha regional",
+      descricao:
+        "Clientes ativos da regional " + (supV8 || "sem vinculo"),
+      clientes: ativosV8.filter(c =>
+        Boolean(supV8) &&
+        (c.supervisores ?? []).some(s =>
+          norm(s.codigo) === supV8
+        )
+      ).slice(0, limiteV8),
+    },
+  ];
+
+  const codigosAmostraV8 = [...new Set(
+    universosV8.flatMap(u =>
+      u.clientes.map(c =>
+        cleanCode(String(c.codigoCliente ?? ""))
+      )
+    )
+  )].filter(Boolean);
+
+  // Uma consulta agrupada, sem buscar as mesmas
+  // empresas novamente em cada aba.
+  const vendasAmostraV8 =
+    await buscarVendasClientes360(codigosAmostraV8);
+
+  const { produtosAutorizados } =
+    await carregarCarteiraOficial360();
+
+  const linhasAutorizadasV8 = new Set(
+    produtosAutorizados
+      .map(p => norm(p.codigoLinha))
+      .filter(Boolean)
+  );
+
+  const nomeLinhaV8 = new Map<string, string>();
+  const referenciasAutorizadasV8 =
+    new Map<string, Set<string>>();
+
   for (const p of produtosAutorizados) {
-    const linha = norm(p.codigoLinha); const ref = cleanReferencia(p.referencia);
-    if (!linha || !ref) continue;
-    if (!refsPorLinha.has(linha)) refsPorLinha.set(linha,new Set());
-    refsPorLinha.get(linha)?.add(ref);
-  }
-  const linhasDoGrupo = new Set(vendas.map(v=>norm(v.codigoLinha)).filter(Boolean));
-  const amostra = new Map<string, { nome: string; clientes: Set<string>; pares: number[]; valores: number[]; refs: Set<string> }>();
-  for (const [codigo, lista] of vendasComparacao) {
-    const porLinha = new Map<string, {nome:string;pares:number;valor:number;refs:Set<string>}>();
-    for(const v of lista) {
-      const chave = norm(v.codigoLinha);
-      if (!chave || !linhasAutorizadas.has(chave) || (linhasDoGrupo.has(chave) && chave !== "7")) continue;
-      const item = porLinha.get(chave) || {nome: String(v.linha || `Linha ${chave}`),pares:0,valor:0,refs:new Set<string>()};
-      item.pares += Number(v.qtd)||0; item.valor += Number(v.vlr)||0;
-      const ref = cleanReferencia(v.referencia);
-      if(ref && refsPorLinha.get(chave)?.has(ref)) item.refs.add(ref);
-      porLinha.set(chave,item);
+    const linha = norm(p.codigoLinha);
+    const referencia = cleanReferencia(p.referencia);
+
+    if (!linha) continue;
+
+    if (!nomeLinhaV8.has(linha)) {
+      nomeLinhaV8.set(
+        linha,
+        p.linha || ("Linha " + linha)
+      );
     }
-    for (const [chave,item] of porLinha) {
-      const x = amostra.get(chave) || {nome:item.nome,clientes:new Set<string>(),pares:[],valores:[],refs:new Set<string>()};
-      x.clientes.add(codigo); x.pares.push(item.pares); x.valores.push(item.valor);
-      for (const ref of item.refs) x.refs.add(ref);
-      amostra.set(chave,x);
+
+    if (referencia) {
+      const refs = referenciasAutorizadasV8.get(linha)
+        ?? new Set<string>();
+
+      refs.add(referencia);
+      referenciasAutorizadasV8.set(linha, refs);
     }
   }
-  const mediana = (vals:number[]) => {const xs=[...vals].sort((a,b)=>a-b);const m=Math.floor(xs.length/2);return xs.length ? xs.length%2 ? xs[m] : (xs[m-1]+xs[m])/2 : 0;};
-  const lista = [...amostra].map(([codigo,x]) => ({
-    codigo, ...x,
-    percentual: codigos.length ? x.clientes.size / codigos.length * 100 : 0,
-    medianaPares:mediana(x.pares), medianaValor:mediana(x.valores)
-  })).filter(x => x.clientes.size>=2 || x.codigo==="7")
-    .sort((a,b)=>Number(b.codigo==="7")-Number(a.codigo==="7") || b.percentual-a.percentual).slice(0,8);
-  // PLAY deve aparecer mesmo se não houver histórico na amostra. Nunca inventar percentuais.
-  if (linhasAutorizadas.has("7") && !lista.some(x=>x.codigo==="7")) {
-    lista.unshift({codigo:"7",nome:"KIDY PLAY",clientes:new Set<string>(),pares:[],valores:[],refs:new Set<string>(),percentual:0,medianaPares:0,medianaValor:0});
-    if(lista.length>8)lista.pop();
-  }
-  return <section style={painel}>
-    {titulo("04", "Produtos com potencial")}
-    <p style={{ background: "#fff6e9", padding: 12, borderRadius: 8, fontSize: 12 }}>Comparação com {codigos.length} clientes ativos da carteira do {grupoAmostra}, fora do grupo analisado. Percentuais são penetração da linha na amostra, não probabilidade de compra.</p>
-    {lista.length ? <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit,minmax(235px,1fr))", gap: 12 }}>
-      {lista.map(p => {
-        const nivel = p.clientes.size === 0 ? "SEM AMOSTRA" : p.percentual >= 70 ? "ALTO" : p.percentual >= 45 ? "MÉDIO" : "BAIXO";
-        return <article key={p.codigo} style={{ background:"#fff", border:"1px solid #f0c88f", borderRadius:12, padding:15 }}>
-          <div style={{ display:"flex", justifyContent:"space-between", gap:10 }}><div><strong style={{ fontSize:12 }}>{p.nome}</strong>{p.codigo==="7" && <div style={{ fontSize:11, color:"#b45309", fontWeight:800 }}>★ PLAY — PRIORIDADE KIDY</div>}<div style={{ fontSize:11 }}>Cód. {p.codigo}</div></div><span style={{ fontSize:10, fontWeight:800, color:p.percentual>=70?"#15803d":"#b45309" }}>{nivel}</span></div>
-          <div style={{ color:"#e87900", fontSize:27, fontWeight:800, marginTop:13 }}>{p.clientes.size ? `${p.percentual.toFixed(0)}%` : "—"}</div>
-          <div style={{ fontSize:11, color:"#986c3f" }}>{p.clientes.size ? "dos clientes da amostra compram esta linha" : "Sem histórico suficiente para calcular"}</div>
-          <div style={{ display:"grid", gridTemplateColumns:"repeat(3,1fr)", gap:6, marginTop:16, fontSize:11 }}><div>Clientes<strong style={{display:"block"}}>{p.clientes.size}</strong></div><div>Mediana pares<strong style={{display:"block"}}>{n(p.medianaPares)}</strong></div><div>Mediana valor<strong style={{display:"block"}}>{dinheiro(p.medianaValor)}</strong></div></div>
-          <div style={{ borderTop:"1px solid #f0c88f", marginTop:16, paddingTop:10, fontSize:11 }}><span style={{ color:"#986c3f" }}>Referências autorizadas com venda na amostra:</span><strong style={{ display:"block", overflowWrap:"anywhere" }}>{[...p.refs].slice(0,5).join(" • ") || "Nenhuma referência autorizada identificada"}</strong></div>
-        </article>;
-      })}
-    </div> : <p>Não foram encontradas linhas com evidência suficiente na amostra regional.</p>}
-  </section>;
+
+  // Considera todo o historico do grupo.
+  // Uma linha comprada por qualquer empresa do
+  // grupo nao e uma oportunidade de introducao.
+  const linhasCompradasGrupoV8 = new Set(
+    vendas
+      .filter(v => Number(v.qtd) > 0)
+      .map(v => norm(v.codigoLinha))
+      .filter(Boolean)
+  );
+
+  const medianaV8 = (valores: number[]) => {
+    if (!valores.length) return 0;
+
+    const lista = [...valores].sort((a, b) => a - b);
+    const meio = Math.floor(lista.length / 2);
+
+    return lista.length % 2
+      ? lista[meio]
+      : (lista[meio - 1] + lista[meio]) / 2;
+  };
+
+  const abasPotencialGrupoV8 = universosV8.map(universo => {
+    type Agregado = {
+      codigo: string;
+      nome: string;
+      compradores: Map<
+        string,
+        { pares: number; valor: number }
+      >;
+      referencias: Map<string, Set<string>>;
+    };
+
+    const linhas = new Map<string, Agregado>();
+
+    for (const clienteAmostra of universo.clientes) {
+      const id = cleanCode(
+        String(clienteAmostra.codigoCliente ?? "")
+      );
+
+      const vendasClienteAmostra =
+        vendasAmostraV8.get(id) ?? [];
+
+      for (const v of vendasClienteAmostra) {
+        if (Number(v.qtd) <= 0) continue;
+
+        const linha = norm(v.codigoLinha);
+
+        if (!linha || !linhasAutorizadasV8.has(linha)) {
+          continue;
+        }
+
+        // PLAY e a unica excecao.
+        if (
+          linha !== "7" &&
+          linhasCompradasGrupoV8.has(linha)
+        ) continue;
+
+        const item = linhas.get(linha) ?? {
+          codigo: v.codigoLinha || linha,
+          nome: nomeLinhaV8.get(linha) ||
+            v.linha || ("Linha " + linha),
+          compradores: new Map<
+            string,
+            { pares: number; valor: number }
+          >(),
+          referencias: new Map<string, Set<string>>(),
+        };
+
+        const acumulado = item.compradores.get(id) ?? {
+          pares: 0,
+          valor: 0,
+        };
+
+        acumulado.pares += Number(v.qtd) || 0;
+        acumulado.valor += Number(v.vlr) || 0;
+
+        item.compradores.set(id, acumulado);
+
+        const ref = cleanReferencia(v.referencia);
+
+        if (
+          ref &&
+          referenciasAutorizadasV8.get(linha)?.has(ref)
+        ) {
+          const compradoresRef = item.referencias.get(ref)
+            ?? new Set<string>();
+
+          compradoresRef.add(id);
+          item.referencias.set(ref, compradoresRef);
+        }
+
+        linhas.set(linha, item);
+      }
+    }
+
+    const produtos = [...linhas.entries()]
+      .map(([linha, item]) => ({
+        codigoLinha: item.codigo,
+        linha: item.nome,
+        play: linha === "7",
+        jaCompra: linhasCompradasGrupoV8.has(linha),
+        clientes: item.compradores.size,
+        percentual: universo.clientes.length
+          ? item.compradores.size /
+            universo.clientes.length * 100
+          : 0,
+        medianaPares: medianaV8(
+          [...item.compradores.values()].map(x => x.pares)
+        ),
+        medianaValor: medianaV8(
+          [...item.compradores.values()].map(x => x.valor)
+        ),
+        referencias: [...item.referencias.entries()]
+          .sort((a, b) => b[1].size - a[1].size)
+          .slice(0, 5)
+          .map(([ref]) => ref),
+      }))
+      .filter(p => p.clientes > 0)
+      .sort((a, b) =>
+        b.percentual - a.percentual ||
+        b.clientes - a.clientes
+      );
+
+    const playEncontrada = produtos.find(p => p.play);
+
+    const play = playEncontrada ?? {
+      codigoLinha: "007",
+      linha: nomeLinhaV8.get("7") ||
+        "TENIS KIDY PLAY RESPITEC",
+      play: true,
+      jaCompra: linhasCompradasGrupoV8.has("7"),
+      clientes: 0,
+      percentual: 0,
+      medianaPares: 0,
+      medianaValor: 0,
+      referencias: [] as string[],
+    };
+
+    return {
+      id: universo.id,
+      titulo: universo.titulo,
+      descricao: universo.descricao,
+      amostra: universo.clientes.length,
+      produtos: [
+        play,
+        ...produtos.filter(p => !p.play)
+      ].slice(0, 8),
+    };
+  });
+
+  return (
+    <ProdutosPotencialAbas
+      abas={abasPotencialGrupoV8}
+      numeroSecao="04"
+    />
+  );
 }

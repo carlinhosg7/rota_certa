@@ -475,6 +475,20 @@ export async function GET(req: NextRequest) {
       );
     }
 
+    // Opcoes da hierarquia vigente, independentes de linhas historicas de metas.
+    regionaisDisponiveis.clear();
+    representantesPorRegional.clear();
+    for (const oficial of mapa.cadastro.values()) {
+      if (!oficial.ativo || !oficial.codigo_supervisor) continue;
+      if (perfil === "REPRESENTANTE" && codigo(oficial.codigo_rep) !== representanteLogin) continue;
+      const sup = codigo(oficial.codigo_supervisor);
+      const rep = codigo(oficial.codigo_rep);
+      regionaisDisponiveis.set(sup, oficial.regional || sup);
+      representantesPorRegional.set(`${sup}:${rep}`, {
+        codigo: rep, nome: oficial.nome_rep || rep,
+        regional: oficial.regional, supervisor: sup
+      });
+    }
     const representantesDisponiveis = [
       ...representantesPorRegional.values(),
     ];

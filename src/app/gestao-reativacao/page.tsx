@@ -3,6 +3,7 @@ import { redirect } from "next/navigation";
 import { validarToken } from "@/lib/auth";
 import { supabase } from "@/lib/supabase";
 import { carregarCarteira2027 } from "@/lib/carteira-2027-data";
+import { carregarMapaRepresentantes, normalizarRepresentante } from "@/lib/representantes-oficiais";
 import Sidebar from "@/components/Sidebar";
 import PainelGestaoReativacao from "@/components/PainelGestaoReativacao";
 import CartaoTaxaReativacao from "@/components/CartaoTaxaReativacao";
@@ -65,7 +66,40 @@ export default async function PaginaGestaoReativacao() {
     redirect("/dashboard");
   }
 
-  const carteira = await carregarCarteira2027();
+  const [carteira, mapaOficial] = await Promise.all([
+    carregarCarteira2027(),
+    carregarMapaRepresentantes(),
+  ]);
+
+  const codigo = (v: unknown) => String(v ?? "").trim().replace(/\.0+$/, "");
+  const vinculos = (cliente: (typeof carteira.clientes)[number]) => {
+    const representantes = [...new Set(
+      (cliente.representanteAtual ?? [])
+        .map(r => normalizarRepresentante(codigo(r.codigo), mapaOficial).codigo)
+        .filter(c => mapaOficial.cadastro.get(c)?.ativo)
+    )];
+    const supervisores = [...new Set(representantes
+      .map(c => codigo(mapaOficial.cadastro.get(c)?.codigo_supervisor))
+      .filter(Boolean))];
+    return { representantes, supervisores };
+  };
+
+  const cadastroAutorizado = [...mapaOficial.cadastro.values()]
+    .filter(r => r.ativo)
+    .filter(r => perfil !== "REPRESENTANTE" || codigo(r.codigo_rep) === codigo(rep))
+    .filter(r => perfil !== "SUPERVISOR" || codigo(r.codigo_supervisor) === codigo(sup));
+
+  const supervisoresOficiais = [...new Map(cadastroAutorizado.map(r => [
+    codigo(r.codigo_supervisor),
+    { codigo: codigo(r.codigo_supervisor), nome: r.regional || codigo(r.codigo_supervisor) },
+  ]).filter(([codigo]) => Boolean(codigo)) as Array<[string, { codigo: string; nome: string }]>).values()]
+    .sort((a, b) => a.codigo.localeCompare(b.codigo, "pt-BR", { numeric: true }));
+
+  const representantesOficiais = cadastroAutorizado.map(r => ({
+    codigo: codigo(r.codigo_rep),
+    nome: r.nome_rep || codigo(r.codigo_rep),
+    supervisor: codigo(r.codigo_supervisor),
+  })).sort((a, b) => a.nome.localeCompare(b.nome, "pt-BR"));
 
   const clientes = carteira.clientes.filter(cliente => {
     if (cliente.situacao !== "REATIVACAO") return false;
@@ -76,15 +110,11 @@ export default async function PaginaGestaoReativacao() {
     }
 
     if (perfil === "REPRESENTANTE") {
-      return Boolean(rep) && cliente.representanteAtual.some(
-        r => texto(r.codigo) === rep
-      );
+      return Boolean(rep) && vinculos(cliente).representantes.includes(codigo(rep));
     }
 
     if (perfil === "SUPERVISOR") {
-      return Boolean(sup) && cliente.supervisores.some(
-        s => texto(s.codigo) === sup
-      );
+      return Boolean(sup) && vinculos(cliente).supervisores.includes(codigo(sup));
     }
 
     return false;
@@ -95,16 +125,21 @@ export default async function PaginaGestaoReativacao() {
 
   const linhas = clientes.map(cliente => {
     const registro = mapa.get(texto(cliente.codigoCliente));
+    const oficiais = vinculos(cliente);
 
     return {
       codigo: texto(cliente.codigoCliente),
       razaoSocial: cliente.razaoSocial ?? "",
-      supervisor: cliente.supervisores.map(
-        s => texto(s.nome || s.codigo)
-      ).join(", "),
-      representante: cliente.representanteAtual.map(
-        r => texto(r.nome || r.codigo)
-      ).join(", "),
+      supervisorCodigos: oficiais.supervisores,
+      representanteCodigos: oficiais.representantes,
+      supervisor: oficiais.supervisores.map(c => {
+        const r = supervisoresOficiais.find(x => x.codigo === c);
+        return r ? `${c} - ${r.nome}` : c;
+      }).join(", "),
+      representante: oficiais.representantes.map(c => {
+        const r = mapaOficial.cadastro.get(c);
+        return r ? `${c} - ${r.nome_rep || c}` : c;
+      }).join(", "),
       classificacao: registro?.classificacao ?? "NAO_INICIADO",
       tentativas: registro?.tentativas_contato ?? 0,
       proximaAcao: registro?.proxima_acao ?? "",
@@ -123,7 +158,7 @@ export default async function PaginaGestaoReativacao() {
       />
       <main className="content">
         <CartaoTaxaReativacao supervisor={perfil === "SUPERVISOR" ? sup : ""} representante={perfil === "REPRESENTANTE" ? rep : ""} supervisoresGrupo="" />
-        <PainelGestaoReativacao linhas={linhas} perfil={perfil} />
+        <PainelGestaoReativacao linhas={linhas} perfil={perfil} supervisoresOficiais={supervisoresOficiais} representantesOficiais={representantesOficiais} />
       </main>
     </div>
   );

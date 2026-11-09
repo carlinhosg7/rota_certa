@@ -1,4 +1,5 @@
 import { carregarMapaRepresentantes } from "@/lib/representantes-oficiais";
+import { representantesPermitidos, regionaisPermitidas } from "@/lib/escopo-acesso";
 import { NextRequest, NextResponse } from "next/server";
 import { cookies } from "next/headers";
 import { validarToken } from "@/lib/auth";
@@ -38,6 +39,12 @@ export async function GET(req: NextRequest) {
       );
     }
 
+    // Permissoes reais do usuario autenticado.
+    const [repsEscopo, supsEscopo] = await Promise.all([
+      representantesPermitidos(u),
+      regionaisPermitidas(u),
+    ]);
+
     // =========================================================
     // BASES
     // =========================================================
@@ -48,6 +55,13 @@ export async function GET(req: NextRequest) {
 
     const supInicial = req.nextUrl.searchParams.get("supervisor") || "";
     const repInicial = req.nextUrl.searchParams.get("representante") || "";
+
+    if (supInicial && supsEscopo !== null && !supsEscopo.has(supInicial)) {
+      return NextResponse.json(
+        { erro: "Supervisor fora do seu acesso" },
+        { status: 403 }
+      );
+    }
 
     if (!repInicial) {
       const [{ carteira }, mapaRepresentantes] = await Promise.all([
@@ -70,6 +84,14 @@ export async function GET(req: NextRequest) {
         ...mapaRepresentantes.cadastro.values()
       ].filter((r) => {
         if (!r.ativo) return false;
+        if (
+          repsEscopo !== null &&
+          !repsEscopo.includes(String(r.codigo_rep))
+        ) return false;
+        if (
+          supsEscopo !== null &&
+          !supsEscopo.has(String(r.codigo_supervisor ?? ""))
+        ) return false;
 
         if (perfilInicial === "REPRESENTANTE") {
           return r.codigo_rep === repLoginInicial;
@@ -174,6 +196,14 @@ export async function GET(req: NextRequest) {
       ...mapaFiltros.cadastro.values()
     ].filter((r) => {
       if (!r.ativo) return false;
+        if (
+          repsEscopo !== null &&
+          !repsEscopo.includes(String(r.codigo_rep))
+        ) return false;
+        if (
+          supsEscopo !== null &&
+          !supsEscopo.has(String(r.codigo_supervisor ?? ""))
+        ) return false;
 
       if (perfil === "REPRESENTANTE") {
         return r.codigo_rep === repLogin;
@@ -204,6 +234,27 @@ export async function GET(req: NextRequest) {
       .sort((a, b) =>
         a.localeCompare(b, "pt-BR", { numeric: true })
       );
+
+    // Validar a selecao antes de consultar clientes.
+    if (sup && supsEscopo !== null && !supsEscopo.has(sup)) {
+      return NextResponse.json(
+        { erro: "Supervisor fora do seu acesso" },
+        { status: 403 }
+      );
+    }
+
+    if (
+      rep &&
+      !cadastroOficial.some(r =>
+        String(r.codigo_rep) === rep &&
+        (!sup || String(r.codigo_supervisor) === sup)
+      )
+    ) {
+      return NextResponse.json(
+        { erro: "Representante fora da regional ou do seu acesso" },
+        { status: 403 }
+      );
+    }
 
     const cSup = sup ? c.filter((x) => x.sup === sup) : [];
     // =========================================================

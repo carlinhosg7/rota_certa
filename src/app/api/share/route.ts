@@ -112,7 +112,7 @@ export async function GET() {
     ] = await Promise.all([
       supabase
         .from("representantes_cadastro")
-        .select("codigo_rep,codigo_supervisor")
+        .select("codigo_rep,nome_rep,regional,codigo_supervisor")
         .eq("ativo", true),
 
       supabase
@@ -140,6 +140,24 @@ export async function GET() {
         String(r.gerente ?? "").trim()
       ])
     );
+
+    // A lista do menu vem do cadastro oficial, nao dos JSON historicos.
+    const hierarquiaShare = (cadastroOficial ?? [])
+      .map(r => {
+        const codigo = cod(r.codigo_rep);
+        const supervisor = cod(r.codigo_supervisor);
+        return {
+          codigo,
+          nome: String(r.nome_rep ?? codigo).trim(),
+          supervisor,
+          regional: String(r.regional ?? supervisor).trim(),
+          gerente: gerentesOficiais.get(supervisor) ?? gerentePorSupervisor(supervisor),
+        };
+      })
+      .filter(r =>
+        r.codigo && r.supervisor &&
+        (escopo.nacional || escopo.representantes.has(r.codigo))
+      );
 
     const representantesPorCidade = new Map<
       string,
@@ -185,6 +203,10 @@ export async function GET() {
         }
 
         const supervisorOficial = supervisoresOficiais.get(codigo);
+
+        // Apenas representantes do cadastro oficial ativo entram nos filtros.
+        if (!supervisorOficial) continue;
+
         const gerenteOficial = supervisorOficial
           ? gerentesOficiais.get(supervisorOficial)
           : undefined;
@@ -282,6 +304,7 @@ export async function GET() {
 
     return NextResponse.json({
       cidades,
+      hierarquia_share: hierarquiaShare,
       ultimoAnoCompleto,
       vendasDisponiveis: true,
       observacao: "Historico de entregas carregado do Google Drive."

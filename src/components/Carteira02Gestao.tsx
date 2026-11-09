@@ -1,6 +1,6 @@
 "use client";
 
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 
 /**
  * Recebe a MESMA lista já filtrada usada no indicador Carteira 02 do Painel.
@@ -48,10 +48,31 @@ const primeiro = (v: Pessoa[] | undefined) =>
     ? v.find((p) => codigo(p?.codigo) && codigo(p.codigo).toUpperCase() !== "TOTAL GERAL")
     : undefined;
 
-export default function Carteira02Gestao({ clientes }: { clientes: Entrada[] }) {
+type RegionalOficial = {
+  codigo: string;
+  nome: string;
+  representantes: { codigo: string; nome: string }[];
+};
+
+export default function Carteira02Gestao({ clientes, hierarquia }: {
+  clientes: Entrada[];
+  hierarquia: RegionalOficial[];
+}) {
   const [supervisorFiltro, setSupervisorFiltro] = useState("");
   const [representanteFiltro, setRepresentanteFiltro] = useState("");
   const [busca, setBusca] = useState("");
+  const [hierarquiaOficial,setHierarquiaOficial] = useState<{
+    supervisores:Array<{codigo:string;nome:string}>;
+    representantes:Array<{codigo:string;nome:string;supervisor:string}>;
+  } | null>(null);
+  useEffect(() => {
+    let cancelado=false;
+    fetch("/api/hierarquia-comercial",{cache:"no-store"})
+      .then(async r => {if(!r.ok)throw new Error("hierarquia");return r.json();})
+      .then(d => {if(!cancelado)setHierarquiaOficial(d);})
+      .catch(e => console.error("[CARTEIRA02] Filtro oficial indisponivel",e));
+    return () => {cancelado=true;};
+  },[]);
 
   const linhas = useMemo<Linha[]>(() => {
     const unicos = new Map<string, Linha>();
@@ -76,8 +97,19 @@ export default function Carteira02Gestao({ clientes }: { clientes: Entrada[] }) 
     return [...unicos.values()];
   }, [clientes]);
 
-  const supervisores = useMemo(() => [...new Map(linhas.map((l) => [l.codigoSupervisor, `${l.codigoSupervisor} — ${l.supervisor}`])).entries()].sort((a,b) => a[0].localeCompare(b[0])), [linhas]);
-  const representantes = useMemo(() => [...new Map(linhas.filter((l) => !supervisorFiltro || l.codigoSupervisor === supervisorFiltro).map((l) => [l.codigoRepresentante, `${l.codigoRepresentante} — ${l.representante}`])).entries()].sort((a,b) => a[0].localeCompare(b[0])), [linhas, supervisorFiltro]);
+  const supervisores = useMemo(
+    () => hierarquia.map(s => [s.codigo, `${s.codigo} — ${s.nome}`] as [string, string]),
+    [hierarquia]
+  );
+  const representantes = useMemo(() => {
+    const regionais = supervisorFiltro
+      ? hierarquia.filter(s => s.codigo === supervisorFiltro)
+      : hierarquia;
+    return [...new Map(regionais.flatMap(s => s.representantes)
+      .map(r => [r.codigo, `${r.codigo} — ${r.nome}`] as [string, string])).entries()]
+      .sort((a, b) => a[0].localeCompare(b[0], 'pt-BR', { numeric: true }));
+  }, [hierarquia, supervisorFiltro]);
+
   const filtradas = useMemo(() => {
     const texto = busca.trim().toLocaleLowerCase("pt-BR");
     return linhas.filter((l) =>

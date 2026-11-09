@@ -8,6 +8,8 @@ type Linha = {
   razaoSocial: string;
   supervisor: string;
   representante: string;
+  supervisorCodigos: string[];
+  representanteCodigos: string[];
   classificacao: string;
   tentativas: number;
   proximaAcao: string;
@@ -56,9 +58,13 @@ function formatarData(valor: string) {
 export default function PainelGestaoReativacao({
   linhas,
   perfil,
+  supervisoresOficiais,
+  representantesOficiais,
 }: {
   linhas: Linha[];
   perfil: string;
+  supervisoresOficiais: { codigo: string; nome: string }[];
+  representantesOficiais: { codigo: string; nome: string; supervisor: string }[];
 }) {
   const [busca, setBusca] = useState("");
   const [classificacao, setClassificacao] = useState("");
@@ -70,18 +76,10 @@ export default function PainelGestaoReativacao({
   const hoje = dataLocal();
   const amanha = proximoDia(hoje);
 
-  const supervisores = useMemo(
-    () => [...new Set(linhas.flatMap(l =>
-      l.supervisor.split(", ").filter(Boolean)
-    ))].sort((a, b) => a.localeCompare(b, "pt-BR")),
-    [linhas]
-  );
-
+  const supervisores = supervisoresOficiais;
   const representantes = useMemo(
-    () => [...new Set(linhas.flatMap(l =>
-      l.representante.split(", ").filter(Boolean)
-    ))].sort((a, b) => a.localeCompare(b, "pt-BR")),
-    [linhas]
+    () => representantesOficiais.filter(r => !supervisor || r.supervisor === supervisor),
+    [representantesOficiais, supervisor]
   );
 
   const filtradas = linhas.filter(l => {
@@ -96,8 +94,8 @@ export default function PainelGestaoReativacao({
 
     if (busca && !texto.includes(busca.toLowerCase().trim())) return false;
     if (classificacao && l.classificacao !== classificacao) return false;
-    if (supervisor && !l.supervisor.split(", ").includes(supervisor)) return false;
-    if (representante && !l.representante.split(", ").includes(representante)) return false;
+    if (supervisor && !l.supervisorCodigos.includes(supervisor)) return false;
+    if (representante && !l.representanteCodigos.includes(representante)) return false;
 
     if (agenda === "HOJE") {
       return l.statusAcao === "PENDENTE" && l.dataProximaAcao.slice(0, 10) === hoje;
@@ -215,16 +213,16 @@ export default function PainelGestaoReativacao({
 
         <select style={filtro} value={supervisor}
           aria-label="Supervisor"
-          onChange={e => { setSupervisor(e.target.value); setPagina(1); }}>
+          onChange={e => { setSupervisor(e.target.value); setRepresentante(""); setPagina(1); }}>
           <option value="">Todos os supervisores</option>
-          {supervisores.map(s => <option key={s} value={s}>{s}</option>)}
+          {supervisores.map(s => <option key={s.codigo} value={s.codigo}>{s.codigo} - {s.nome}</option>)}
         </select>
 
         <select style={filtro} value={representante}
           aria-label="Representante"
           onChange={e => { setRepresentante(e.target.value); setPagina(1); }}>
           <option value="">Todos os representantes</option>
-          {representantes.map(r => <option key={r} value={r}>{r}</option>)}
+          {representantes.map(r => <option key={r.codigo} value={r.codigo}>{r.codigo} - {r.nome}</option>)}
         </select>
 
         <select style={filtro} value={agenda}

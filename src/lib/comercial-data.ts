@@ -25,6 +25,9 @@ export const MAPA_SUPERVISORES: Record<string, string> = {
   "9918": "MT/MS",
   "9919": "RN",
   "9920": "B2B",
+  "9921": "RN - SP/SUL",
+  "9922": "RN - CEO/REM",
+  "9923": "RN - Norte/Nordeste",
 };
 
 export function cleanCode(v: any) {

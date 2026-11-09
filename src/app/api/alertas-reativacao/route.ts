@@ -2,6 +2,11 @@ import { NextRequest, NextResponse } from "next/server";
 import { validarToken } from "@/lib/auth";
 import { supabase } from "@/lib/supabase";
 import { carregarCarteira2027 } from "@/lib/carteira-2027-data";
+import { representantesPermitidos } from "@/lib/escopo-acesso";
+import {
+  carregarMapaRepresentantes,
+  normalizarRepresentante,
+} from "@/lib/representantes-oficiais";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -48,61 +53,87 @@ export async function GET(req: NextRequest) {
     }
 
     const perfil = texto(usuario.perfil).toUpperCase();
-    const codigoRep = texto(usuario.codigo_representante);
-    const codigoSup = texto(usuario.codigo_supervisor);
 
-    if (
-      !["ADMIN", "ADMINISTRADOR", "GERENTE", "SUPERVISOR", "REPRESENTANTE"].includes(perfil)
-    ) {
+    if (![
+      "ADMIN", "ADMINISTRADOR", "DIRETOR",
+      "GERENTE", "SUPERVISOR", "REPRESENTANTE", "REP"
+    ].includes(perfil)) {
       return NextResponse.json(
-        { sucesso: false, erro: "Perfil sem permissão." },
+        { sucesso: false, erro: "Perfil sem permiss?o." },
         { status: 403 }
       );
     }
 
-    if (
-      (perfil === "REPRESENTANTE" && !codigoRep) ||
-      (perfil === "SUPERVISOR" && !codigoSup)
-    ) {
+    // Escopo de seguran?a baseado na equipe oficial ativa.
+    const [permitidos, mapa, carteira] = await Promise.all([
+      representantesPermitidos(usuario),
+      carregarMapaRepresentantes(),
+      carregarCarteira2027(),
+    ]);
+
+    if (permitidos !== null && permitidos.length === 0) {
       return NextResponse.json(
-        { sucesso: false, erro: "Vínculo comercial não configurado." },
+        { sucesso: false, erro: "Sem representantes autorizados." },
         { status: 403 }
       );
     }
 
-    const carteira = await carregarCarteira2027();
+    const cod = (valor: unknown) =>
+      String(valor ?? "").trim().replace(/\\.0+$/, "");
+
+    const autorizados = permitidos === null
+      ? null
+      : new Set(permitidos.map(cod));
 
     const clientesPermitidos = new Map<
       string,
-      { razaoSocial: string; representante: string; supervisor: string }
+      {
+        razaoSocial: string;
+        representante: string;
+        supervisor: string;
+        codigos: string[];
+      }
     >();
 
     for (const cliente of carteira.clientes) {
-      const permitido =
-        ["ADMIN", "ADMINISTRADOR", "GERENTE"].includes(perfil) ||
-        (
-          perfil === "REPRESENTANTE" &&
-          cliente.representanteAtual.some(
-            r => texto(r.codigo) === codigoRep
-          )
-        ) ||
-        (
-          perfil === "SUPERVISOR" &&
-          cliente.supervisores.some(
-            s => texto(s.codigo) === codigoSup
-          )
+      const repCodigos = new Set<string>();
+
+      for (const vinculo of cliente.representanteAtual ?? []) {
+        const normalizado = normalizarRepresentante(
+          cod(vinculo.codigo),
+          mapa
         );
 
-      if (!permitido) continue;
+        const oficial = mapa.cadastro.get(normalizado.codigo);
 
-      clientesPermitidos.set(texto(cliente.codigoCliente), {
+        if (!oficial?.ativo) continue;
+
+        if (
+          autorizados !== null &&
+          !autorizados.has(normalizado.codigo)
+        ) continue;
+
+        repCodigos.add(normalizado.codigo);
+      }
+
+      // Clientes sem representante oficial somente podem ser
+      // consultados por perfis de acesso nacional.
+      if (autorizados !== null && repCodigos.size === 0) continue;
+
+      const codigos = [...repCodigos];
+
+      const supervisores = [...new Set(
+        codigos
+          .map(rep => mapa.cadastro.get(rep)?.codigo_supervisor)
+          .filter((x): x is string => Boolean(x))
+          .map(cod)
+      )];
+
+      clientesPermitidos.set(cod(cliente.codigoCliente), {
         razaoSocial: texto(cliente.razaoSocial),
-        representante: cliente.representanteAtual
-          .map(r => texto(r.codigo))
-          .join(", "),
-        supervisor: cliente.supervisores
-          .map(s => texto(s.codigo))
-          .join(", ")
+        representante: codigos.join(", "),
+        supervisor: supervisores.join(", "),
+        codigos
       });
     }
 
@@ -148,6 +179,20 @@ export async function GET(req: NextRequest) {
       const cliente = clientesPermitidos.get(codigo);
 
       if (!cliente) return [];
+
+      // O alerta tamb?m precisa pertencer ao representante
+      // autorizado, e n?o apenas ao c?digo do cliente.
+      if (autorizados !== null) {
+        const repRegistro = normalizarRepresentante(
+          cod(registro.codigo_representante),
+          mapa
+        ).codigo;
+
+        if (
+          repRegistro &&
+          !cliente.codigos.includes(repRegistro)
+        ) return [];
+      }
 
       const data = texto(registro.data_proxima_acao).slice(0, 10);
 

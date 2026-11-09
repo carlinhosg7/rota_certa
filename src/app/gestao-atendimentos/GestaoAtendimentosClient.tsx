@@ -21,7 +21,7 @@ type Atendimento = {
   data_proxima_acao: string | null;
   observacoes: string | null;
 };
-type Resposta = { atendimentos: Atendimento[]; total: number; pagina: number; paginas: number; erro?: string };
+type Resposta = { atendimentos: Atendimento[]; total: number; pagina: number; paginas: number; erro?: string; filtros?: { supervisores: {codigo:string;nome:string}[]; representantes: {codigo:string;nome:string}[] } };
 
 const money = (v: number) => new Intl.NumberFormat("pt-BR", { style: "currency", currency: "BRL" }).format(v);
 const number = (v: number) => new Intl.NumberFormat("pt-BR").format(v);
@@ -34,6 +34,7 @@ const campo: React.CSSProperties = { border: "1px solid #f4ba7a", background: "#
 export default function GestaoAtendimentosClient() {
   const [inicio, setInicio] = useState(dataInicioMes);
   const [fim, setFim] = useState(dataHoje);
+  const [supervisor, setSupervisor] = useState("");
   const [representante, setRepresentante] = useState("");
   const [cliente, setCliente] = useState("");
   const [resultado, setResultado] = useState("");
@@ -50,6 +51,7 @@ export default function GestaoAtendimentosClient() {
       const p = new URLSearchParams({ pagina: String(pagina) });
       if (inicio) p.set("inicio", inicio);
       if (fim) p.set("fim", fim);
+      if (supervisor) p.set("supervisor", supervisor);
       if (representante.trim()) p.set("representante", representante.trim());
       if (cliente.trim()) p.set("cliente", cliente.trim());
       if (resultado) p.set("resultado", resultado);
@@ -63,7 +65,7 @@ export default function GestaoAtendimentosClient() {
     } finally {
       setCarregando(false);
     }
-  }, [inicio, fim, representante, cliente, resultado, pagina]);
+  }, [inicio, fim, supervisor, representante, cliente, resultado, pagina]);
 
   useEffect(() => { void carregar(); }, [carregar]);
   const registros = dados.atendimentos;
@@ -97,7 +99,18 @@ export default function GestaoAtendimentosClient() {
       <div style={{ display:"flex", flexWrap:"wrap", gap: 12, alignItems:"end" }}>
         <label style={{display:"grid",gap:5, fontSize:12}}>De<input type="date" value={inicio} onChange={e=>{setInicio(e.target.value);setPagina(1);}} style={campo}/></label>
         <label style={{display:"grid",gap:5, fontSize:12}}>Até<input type="date" value={fim} onChange={e=>{setFim(e.target.value);setPagina(1);}} style={campo}/></label>
-        <label style={{display:"grid",gap:5, fontSize:12}}>Representante<input placeholder="Código" value={representante} onChange={e=>{setRepresentante(e.target.value);setPagina(1);}} style={{...campo,width:110}}/></label>
+        <label style={{display:"grid",gap:5,fontSize:12}}>Supervisor
+          <select value={supervisor} onChange={e=>{setSupervisor(e.target.value);setRepresentante("");setPagina(1);}} style={{...campo,minWidth:195}}>
+            <option value="">Todos os supervisores</option>
+            {(dados.filtros?.supervisores ?? []).map(s=><option key={s.codigo} value={s.codigo}>{s.codigo} — {s.nome}</option>)}
+          </select>
+        </label>
+        <label style={{display:"grid",gap:5,fontSize:12}}>Representante
+          <select value={representante} onChange={e=>{setRepresentante(e.target.value);setPagina(1);}} style={{...campo,minWidth:195}}>
+            <option value="">Todos os representantes</option>
+            {(dados.filtros?.representantes ?? []).map(r=><option key={r.codigo} value={r.codigo}>{r.codigo} — {r.nome}</option>)}
+          </select>
+        </label>
         <label style={{display:"grid",gap:5, fontSize:12}}>Cliente<input placeholder="Código" value={cliente} onChange={e=>{setCliente(e.target.value);setPagina(1);}} style={{...campo,width:125}}/></label>
         <label style={{display:"grid",gap:5,fontSize:12}}>Resultado<select value={resultado} onChange={e=>{setResultado(e.target.value);setPagina(1);}} style={campo}>
           <option value="">Todos</option>{["PEDIDO REALIZADO","NEGOCIAÇÃO EM ANDAMENTO","SEM PEDIDO","CLIENTE NÃO VISITADO","REAGENDAR"].map(x=><option key={x}>{x}</option>)}

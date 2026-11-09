@@ -4,6 +4,7 @@ import { validarToken } from "@/lib/auth";
 import { supabase } from "@/lib/supabase";
 import { credenciais } from "@/lib/campanha-treinamento-seguro";
 import { representantesPermitidos, regionaisPermitidas } from "@/lib/escopo-acesso";
+import { carregarMapaRepresentantes, normalizarRepresentante } from "@/lib/representantes-oficiais";
 import { metasReativacaoPorRepresentante, mesesMetaReativacao } from "@/lib/metas-reativacao-campanha";
 
 export const runtime = "nodejs";
@@ -56,6 +57,45 @@ export async function GET(request: NextRequest) {
       return NextResponse.json({ erro: "Supervisor fora do seu escopo" }, { status: 403 });
     }
 
+    const mapaOficial = await carregarMapaRepresentantes();
+
+    const cadastroVisivel = [...mapaOficial.cadastro.values()]
+      .filter(r =>
+        r.ativo &&
+        Boolean(cod(r.codigo_supervisor)) &&
+        (permitidos === null || permitidos.includes(cod(r.codigo_rep))) &&
+        (regionais === null || regionais.has(cod(r.codigo_supervisor)))
+      );
+
+    const oficiais = new Map(
+      cadastroVisivel.map(r => [cod(r.codigo_rep), r])
+    );
+
+    const supervisoresDisponiveis = [
+      ...new Set(cadastroVisivel.map(r => cod(r.codigo_supervisor)))
+    ].sort();
+
+    if (supervisor && !supervisoresDisponiveis.includes(supervisor)) {
+      return NextResponse.json(
+        { erro: "Supervisor fora do cadastro ou escopo" },
+        { status: 403 }
+      );
+    }
+
+    if (representante) {
+      const atual = oficiais.get(representante);
+
+      if (
+        !atual ||
+        (supervisor && cod(atual.codigo_supervisor) !== supervisor)
+      ) {
+        return NextResponse.json(
+          { erro: "Representante fora da regional ou escopo" },
+          { status: 403 }
+        );
+      }
+    }
+
     let consulta = supabase
       .from("kidy_campanha_painel_base")
       .select("campanha,competencia,origem,modalidade,codigo_representante,representante_nome,codigo_supervisor,meta_pares,meta_valor,realizado_pares,realizado_valor,status_dados")
@@ -64,22 +104,34 @@ export async function GET(request: NextRequest) {
       .order("codigo_representante", { ascending: true })
       .range(0, 999);
 
-    if (permitidos !== null) consulta = consulta.in("codigo_representante", permitidos);
-    if (supervisor) consulta = consulta.eq("codigo_supervisor", supervisor);
-    if (representante) consulta = consulta.eq("codigo_representante", representante);
+    // Os filtros sao aplicados apos normalizar o historico.
 
     const { data, error } = await consulta;
     if (error) throw new Error(`Consulta do painel: ${error.message}`);
     const linhas = (data ?? []) as Linha[];
     if (linhas.length === 1000) throw new Error("Limite de consulta atingido. Implementar paginacao antes de exibir totais.");
 
-    // Nunca autorizar pelo filtro enviado no navegador: o escopo ja foi aplicado no servidor.
-    // O supervisor da meta pode estar desatualizado; para perfis regionais,
-    // fazemos uma segunda validacao por escopo ativo do cadastro.
-    const visiveis = linhas.filter((r) =>
-      (permitidos === null || permitidos.includes(cod(r.codigo_representante))) &&
-      (regionais === null || regionais.has(cod(r.codigo_supervisor)))
-    );
+    const visiveis = linhas.flatMap(r => {
+      const codigoAtual = normalizarRepresentante(
+        cod(r.codigo_representante),
+        mapaOficial
+      ).codigo;
+
+      const oficial = oficiais.get(codigoAtual);
+      if (!oficial) return [];
+
+      const supAtual = cod(oficial.codigo_supervisor);
+
+      if (supervisor && supAtual !== supervisor) return [];
+      if (representante && codigoAtual !== representante) return [];
+
+      return [{
+        ...r,
+        codigo_representante: codigoAtual,
+        representante_nome: oficial.nome_rep || r.representante_nome,
+        codigo_supervisor: supAtual,
+      }];
+    });
 
     const indicadores = [
       { chave: "PRODUCAO", origem: "ENTRADA", modalidade: "PRODUCAO", titulo: "Entrada Producao", pontos: 60 },
@@ -121,11 +173,16 @@ export async function GET(request: NextRequest) {
     }}>) {
       const t = row.kidy_campanha_treinamentos;
       if (!t || t.status !== "APROVADO") continue;
-      const rep = cod(t.codigo_representante);
-      if (permitidos !== null && !permitidos.includes(rep)) continue;
+      const rep = normalizarRepresentante(
+        cod(t.codigo_representante),
+        mapaOficial
+      ).codigo;
+
+      const oficial = oficiais.get(rep);
+      if (!oficial) continue;
+
       if (representante && rep !== representante) continue;
-      if (supervisor && cod(t.codigo_supervisor_snapshot) !== supervisor) continue;
-      if (regionais !== null && !regionais.has(cod(t.codigo_supervisor_snapshot))) continue;
+      if (supervisor && cod(oficial.codigo_supervisor) !== supervisor) continue;
       contagemPorRep.set(rep, (contagemPorRep.get(rep) ?? 0) + 1);
     }
     const treinamentosValidos = [...contagemPorRep.values()].reduce((total, n) => total + Math.min(n, 5), 0);
@@ -161,14 +218,29 @@ export async function GET(request: NextRequest) {
       eventos.push(...((lote??[]) as Reat[]));
       if((lote??[]).length<1000)break;
     }
-    const consultaNacional=permitidos===null && regionais===null && !representante && !supervisor;
-    const aptos=eventos.filter(e=>{
-      if(consultaNacional)return true;
-      const r=cod(e.codigo_representante_responsavel),s=cod(e.codigo_supervisor_responsavel);
-      return Boolean(r) && Boolean(s) &&
-        (permitidos===null||permitidos.includes(r)) &&
-        (regionais===null||regionais.has(s)) &&
-        (!representante||representante===r) && (!supervisor||supervisor===s);
+    const consultaNacional =
+      permitidos === null &&
+      regionais === null &&
+      !representante &&
+      !supervisor;
+
+    const aptos = eventos.filter(e => {
+      if (consultaNacional) return true;
+
+      const r = normalizarRepresentante(
+        cod(e.codigo_representante_responsavel),
+        mapaOficial
+      ).codigo;
+
+      const oficial = oficiais.get(r);
+      if (!oficial) return false;
+
+      const s = cod(oficial.codigo_supervisor);
+
+      return (
+        (!representante || representante === r) &&
+        (!supervisor || supervisor === s)
+      );
     });
     // Metas do arquivo META REATIVICAO: 5 clientes por representante a cada mes.
     // Escopo obtido da base da campanha ja filtrada por permissoes, sem expor metas alheias.
@@ -188,10 +260,17 @@ export async function GET(request: NextRequest) {
       status:"DETECTADO_NAO_HOMOLOGADO",pontosConcedidos:0,
     });
 
-    const opcoes = [...new Map(visiveis.map((i) => [cod(i.codigo_representante), {
-      codigo: cod(i.codigo_representante), nome: i.representante_nome || cod(i.codigo_representante),
-    }])).values()].sort((a, b) => a.nome.localeCompare(b.nome, "pt-BR"));
-    const supervisores = [...new Set(visiveis.map((i) => cod(i.codigo_supervisor)).filter(Boolean))].sort();
+    const opcoes = cadastroVisivel
+      .filter(r =>
+        !supervisor || cod(r.codigo_supervisor) === supervisor
+      )
+      .map(r => ({
+        codigo: cod(r.codigo_rep),
+        nome: r.nome_rep || cod(r.codigo_rep)
+      }))
+      .sort((a, b) => a.nome.localeCompare(b.nome, "pt-BR"));
+
+    const supervisores = supervisoresDisponiveis;
 
     return NextResponse.json({
       campanha: CAMPANHA, competencia,

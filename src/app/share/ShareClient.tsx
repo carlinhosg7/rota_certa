@@ -5,7 +5,20 @@ import { useEffect, useMemo, useState } from 'react';
 import type { CidadeShare } from '../../lib/share';
 import { calcularShareMedio } from '../../lib/share';
 
-type Dados = { cidades: CidadeShare[]; ultimoAnoCompleto: number; vendasDisponiveis: boolean; observacao: string };
+type HierarquiaShare = {
+  codigo: string;
+  nome: string;
+  supervisor: string;
+  regional: string;
+  gerente: string;
+};
+type Dados = {
+  cidades: CidadeShare[];
+  hierarquia_share?: HierarquiaShare[];
+  ultimoAnoCompleto: number;
+  vendasDisponiveis: boolean;
+  observacao: string;
+};
 type ClienteCidade = { codigo:string; razao_social:string; grupo_cliente:string; codigo_representante:string; representante:string; supervisor:string; cidade:string; uf:string };
 type DetalhesClientes = { clientes:ClienteCidade[]; total:number; visao360Template:string|null };
 
@@ -74,44 +87,35 @@ export default function ShareClient() {
     }];
   };
 
+  const hierarquiaOficial = dados?.hierarquia_share ?? [];
+
   const gerentesDisponiveis = useMemo(
-    () => unique(
-      baseComEquipes.flatMap(c =>
-        equipesDaCidade(c).map(e => e.gerente)
-      )
-    ),
-    [base]
+    () => unique(hierarquiaOficial.map(e => e.gerente)),
+    [dados]
   );
 
-  const supervisores = useMemo(
-    () => unique(
-      baseComEquipes.flatMap(c =>
-        equipesDaCidade(c)
-          .filter(e => !gerente || e.gerente === gerente)
-          .map(e => e.supervisor)
-      )
-    ),
-    [base, gerente]
-  );
+  const supervisores = useMemo(() => {
+    const mapa = new Map<string, string>();
+    for (const e of hierarquiaOficial) {
+      if (gerente && e.gerente !== gerente) continue;
+      mapa.set(e.supervisor, e.regional || e.supervisor);
+    }
+    return [...mapa.entries()].sort(([a], [b]) =>
+      a.localeCompare(b, 'pt-BR', {numeric: true})
+    );
+  }, [dados, gerente]);
 
   const representantes = useMemo(() => {
     const mapa = new Map<string, string>();
-
-    for (const c of baseComEquipes) {
-      for (const e of equipesDaCidade(c)) {
-        if (gerente && e.gerente !== gerente) continue;
-        if (supervisor && e.supervisor !== supervisor) continue;
-
-        if (!mapa.has(e.codigo)) {
-          mapa.set(e.codigo, e.nome);
-        }
-      }
+    for (const e of hierarquiaOficial) {
+      if (gerente && e.gerente !== gerente) continue;
+      if (supervisor && e.supervisor !== supervisor) continue;
+      mapa.set(e.codigo, e.nome);
     }
-
     return [...mapa.entries()].sort(([a], [b]) =>
-      a.localeCompare(b, "pt-BR", {numeric: true})
+      a.localeCompare(b, 'pt-BR', {numeric: true})
     );
-  }, [base, gerente, supervisor]);
+  }, [dados, gerente, supervisor]);
 
   // Sem selecao comercial, preserva o historico municipal
   // original. Com selecao, considera apenas a equipe escolhida.
@@ -233,7 +237,7 @@ export default function ShareClient() {
       {!dados.vendasDisponiveis&&<p role="status" style={{padding:12,background:'#fff7ed',borderRadius:8}}>Vendas dos Parquets ainda não integradas. Shares reais ficam indisponíveis até carregar <code>data/share-vendas-anuais.json</code>.</p>}
       <section style={{display:'grid',gridTemplateColumns:'repeat(auto-fit,minmax(190px,1fr))',gap:12,margin:'18px 0'}}>
          <label>Gerente<select style={inputStyle} value={gerente} onChange={e=>{setGerente(e.target.value);setSupervisor('');setRep('');setUf('');setCidade('')}}><option value="">Todos</option>{gerentesDisponiveis.map(v=><option key={v} value={v}>{v}</option>)}</select></label>
-         <label>Supervisor<select style={inputStyle} value={supervisor} onChange={e=>{setSupervisor(e.target.value);setRep('');setUf('');setCidade('')}}><option value="">Todos</option>{supervisores.map(v=><option key={v} value={v}>{v}</option>)}</select></label>
+         <label>Supervisor<select style={inputStyle} value={supervisor} onChange={e=>{setSupervisor(e.target.value);setRep('');setUf('');setCidade('')}}><option value="">Todos</option>{supervisores.map(([codigo, nome])=><option key={codigo} value={codigo}>{codigo} - {nome}</option>)}</select></label>
          <label>Representante<select style={inputStyle} value={rep} onChange={e=>{setRep(e.target.value);setUf('');setCidade('')}}><option value="">Todos</option>{representantes.map(([codigo,nome])=><option key={codigo} value={codigo}>{codigo}{nome?` - ${nome}`:''}</option>)}</select></label>
          <label>UF<select style={inputStyle} value={uf} onChange={e=>{setUf(e.target.value);setCidade('')}}><option value="">Todas</option>{ufs.map(v=><option key={v} value={v}>{v}</option>)}</select></label>
          <label>Cidade<select style={inputStyle} value={cidade} onChange={e=>setCidade(e.target.value)}><option value="">Todas</option>{cidades.map(v=><option key={v} value={v}>{v}</option>)}</select></label>

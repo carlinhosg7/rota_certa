@@ -3,6 +3,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import { cookies } from 'next/headers';
 import { validarToken } from '@/lib/auth';
 import { representantesPermitidos } from '@/lib/escopo-acesso';
+import { carregarMapaRepresentantes, normalizarRepresentante } from '@/lib/representantes-oficiais';
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
@@ -77,18 +78,21 @@ export async function POST(req: NextRequest) {
     }) as Linha[];
     if (linhas.length !== 1 || !linhas[0].dados) return falha('Cliente nao encontrado na carteira ativa',404);
     const cliente = linhas[0].dados;
-    const vinculo = vinculos(cliente).find(p=>cod(p.codigo)===repCodigo);
+    // O cliente pode manter o codigo antigo no snapshot.
+    // A consulta oficial prioriza codigos atuais, inclusive o 19.
+    const mapaOficial = await carregarMapaRepresentantes();
+    const vinculo = vinculos(cliente).find(p =>
+      normalizarRepresentante(cod(p.codigo), mapaOficial).codigo === repCodigo
+    );
     if (!vinculo) return falha('Cliente nao vinculado ao representante informado',403);
     const representantes = await consultar(base,headers,'representantes_cadastro',{
       select:'codigo_rep,codigo_supervisor',codigo_rep:`eq.${repCodigo}`,ativo:'eq.true',limit:'2'
     }) as Array<{codigo_rep:string|number;codigo_supervisor:string|number|null}>;
     if (representantes.length !== 1) return falha('Representante ativo nao encontrado no cadastro oficial',409);
     const supervisor = cod(representantes[0].codigo_supervisor);
-    const supervisors = Array.isArray(cliente.supervisores) ? cliente.supervisores.map(x=>cod(x.codigo)) : [];
-    // Supervisor do cadastro e o oficial; divergencia com snapshot exige revisao humana.
-    if (supervisor && supervisors.length > 0 && !supervisors.includes(supervisor)) {
-      return falha('Divergencia entre supervisor da carteira e cadastro do representante',409);
-    }
+    // O supervisor oficial atual prevalece sobre o codigo antigo do snapshot.
+    // A autorizacao continua validada acima pelo representante ativo.
+    if (!supervisor) return falha('Representante sem supervisor oficial',409);
     const dataUltima = texto(cliente.ultimaCompra);
     const ultima = dataValida(dataUltima) ? dataUltima : null;
     const limite = typeof cliente.limiteDisponivel === 'number' && Number.isFinite(cliente.limiteDisponivel)

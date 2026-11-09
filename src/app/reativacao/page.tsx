@@ -3,6 +3,7 @@ import Link from "next/link";
 import { cookies } from "next/headers";
 import { redirect } from "next/navigation";
 import Sidebar from "@/components/Sidebar";
+import { obterHierarquiaComercial } from "@/lib/hierarquia-comercial-filtros";
 import { validarToken } from "@/lib/auth";
 import { cleanCode } from "@/lib/comercial-data";
 import { carregarCarteira2027 } from "@/lib/carteira-2027-data";
@@ -345,24 +346,11 @@ export default async function RankingReativacao({
       texto(c.situacaoEmpresa) !== "BAIXADA"
   );
 
-  const repsDisponiveis = new Map<string, string>();
-  const supsDisponiveis = new Map<string, string>();
-
-  for (const c of clientes) {
-    for (const r of c.representanteAtual ?? []) {
-      repsDisponiveis.set(
-        codigo(r.codigo),
-        r.nome || codigo(r.codigo)
-      );
-    }
-
-    for (const s of c.supervisores ?? []) {
-      supsDisponiveis.set(
-        codigo(s.codigo),
-        s.nome || codigo(s.codigo)
-      );
-    }
-  }
+  const hierarquia = await obterHierarquiaComercial(usuario);
+  const repsDisponiveis = new Map<string, string>(hierarquia.representantes
+    .filter(r => !filtroSup || r.supervisor === filtroSup)
+    .map(r => [r.codigo,r.nome]));
+  const supsDisponiveis = new Map<string, string>(hierarquia.supervisores.map(s => [s.codigo,s.nome]));
 
   if (filtroRep) {
     clientes = clientes.filter(c =>

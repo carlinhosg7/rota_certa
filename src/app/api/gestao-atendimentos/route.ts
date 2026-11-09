@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { validarToken } from "@/lib/auth";
 import { representantesPermitidos as obterRepresentantesPermitidos } from "@/lib/escopo-acesso";
 import { supabase } from "@/lib/supabase";
+import { carregarMapaRepresentantes } from "@/lib/representantes-oficiais";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -36,13 +37,44 @@ export async function GET(req: NextRequest) {
     const dataFim = url.searchParams.get("fim") || "";
     const representante = codigo(url.searchParams.get("representante"));
     const resultado = url.searchParams.get("resultado") || "";
+    const supervisor = codigo(url.searchParams.get("supervisor"));
     const cliente = codigo(url.searchParams.get("cliente"));
 
     if ((dataInicio && !/^\d{4}-\d{2}-\d{2}$/.test(dataInicio)) || (dataFim && !/^\d{4}-\d{2}-\d{2}$/.test(dataFim))) {
       return NextResponse.json({ erro: "Data inválida" }, { status: 400 });
     }
-    if (representantesPermitidos && representante && !representantesPermitidos.includes(representante)) {
-      return NextResponse.json({ erro: "Representante fora da sua equipe" }, { status: 403 });
+    // Cadastro oficial define todas as opcoes, independentemente de haver atendimentos.
+    const mapa = await carregarMapaRepresentantes();
+    const cadastro = [...mapa.cadastro.values()].filter(r =>
+      r.ativo && codigo(r.codigo_supervisor) &&
+      (representantesPermitidos === null || representantesPermitidos.includes(codigo(r.codigo_rep)))
+    );
+    const supervisores = [...new Map(cadastro.map(r => [codigo(r.codigo_supervisor), {
+      codigo: codigo(r.codigo_supervisor), nome: String(r.regional || r.codigo_supervisor)
+    }])).values()].sort((a,b) => a.codigo.localeCompare(b.codigo));
+    const repsOficiais = cadastro
+      .filter(r => !supervisor || codigo(r.codigo_supervisor) === supervisor)
+      .map(r => ({codigo:codigo(r.codigo_rep),nome:String(r.nome_rep || r.codigo_rep)}))
+      .sort((a,b) => a.nome.localeCompare(b.nome,'pt-BR'));
+    if (supervisor && !supervisores.some(s => s.codigo === supervisor)) {
+      return NextResponse.json({erro:"Supervisor fora do seu escopo"},{status:403});
+    }
+    if (representante && !repsOficiais.some(r=>r.codigo===representante)) {
+      return NextResponse.json({erro:"Representante fora da regional ou do seu escopo"},{status:403});
+    }
+
+    const atuais = new Set(repsOficiais.filter(r=>!representante || r.codigo===representante).map(r=>r.codigo));
+    const origem = new Set(atuais);
+    // Priorizar codigos ativos; nunca transferir um codigo ativo por um De/Para antigo.
+    for (const [antigo, atual] of mapa.dePara) {
+      if (atuais.has(atual) && !mapa.cadastro.has(antigo)) origem.add(antigo);
+    }
+    // Sem supervisor, o catalogo ja cobre todos os representantes autorizados.
+    // Uma lista vazia deve falhar fechada, nunca executar consulta sem restricao.
+    if (!origem.size) {
+      return NextResponse.json({atendimentos:[],total:0,pagina,paginas:0,
+        filtros:{supervisores,representantes:repsOficiais}},
+        {headers:{"Cache-Control":"private, no-store"}});
     }
 
     let q = supabase.from("atendimentos_comerciais")
@@ -50,15 +82,15 @@ export async function GET(req: NextRequest) {
       .order("data_atendimento", { ascending: false })
       .range((pagina-1)*porPagina, pagina*porPagina-1);
 
-    if (representantesPermitidos) q = q.in("codigo_representante", representantesPermitidos);
-    if (representante) q = q.eq("codigo_representante", representante);
+    q = q.in("codigo_representante", [...origem]);
     if (cliente) q = q.eq("codigo_cliente", cliente);
     if (resultado) q = q.eq("resultado", resultado);
     if (dataInicio) q = q.gte("data_atendimento", `${dataInicio}T00:00:00`);
     if (dataFim) q = q.lte("data_atendimento", `${dataFim}T23:59:59.999`);
     const { data, count, error } = await q;
     if (error) throw error;
-    return NextResponse.json({ atendimentos: data ?? [], total: count ?? 0, pagina, paginas: Math.ceil((count ?? 0)/porPagina) }, {
+    return NextResponse.json({ atendimentos: data ?? [], total: count ?? 0, pagina, paginas: Math.ceil((count ?? 0)/porPagina),
+      filtros: {supervisores, representantes:repsOficiais} }, {
       headers: { "Cache-Control": "private, no-store" }
     });
   } catch (e) {

@@ -1,4 +1,4 @@
-﻿import { supabase } from "./supabase";
+import { supabase } from "./supabase";
 
 export type RepresentanteOficial = {
   codigo_rep: string;
@@ -24,6 +24,9 @@ const REGIONAIS: Record<string, string> = {
   "MT/MS": "9918",
   "RN": "9919",
   "B2B": "9920",
+  "RN - SP/SUL": "9921",
+  "RN - CEO/REM": "9922",
+  "RN - NORTE/NORDESTE": "9923",
 };
 
 function codigo(valor: unknown): string {
@@ -74,9 +77,8 @@ export async function carregarMapaRepresentantes(): Promise<MapaRepresentantes> 
     const atual = codigo(item.codigo_atual);
 
     if (cadastro.has(antigo)) {
-      throw new Error(
-        `De/Para inválido: código ${antigo} já é representante atual.`
-      );
+      // Codigo ativo tem prioridade sobre o De/Para historico.
+      continue;
     }
 
     if (!cadastro.has(atual)) {

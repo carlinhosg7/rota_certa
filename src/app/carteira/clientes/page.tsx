@@ -10,6 +10,7 @@ import { redirect } from "next/navigation";
 import { validarToken } from "@/lib/auth";
 import { acessoGlobal, regionaisPermitidas, representantesPermitidos } from "@/lib/escopo-acesso";
 import Sidebar from "@/components/Sidebar";
+import { carregarMapaRepresentantes, normalizarRepresentante } from "@/lib/representantes-oficiais";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -121,40 +122,108 @@ export default async function ListaCarteira({ searchParams }: Props) {
     );
   }
 
-  // Primeiro restringe os registros autorizados.
-  // Escopo obrigatorio antes de qualquer filtro da interface.
+  // Hierarquia oficial e controle de acesso centralizado.
+  const [mapaOficial, repsAutorizados, regionaisAutorizadas] =
+    await Promise.all([
+      carregarMapaRepresentantes(),
+      representantesPermitidos(u),
+      regionaisPermitidas(u),
+    ]);
+
   const acessoNacional = acessoGlobal(u);
 
-  const regionaisAutorizadas = acessoNacional
+  const repsPermitidos = repsAutorizados === null
     ? null
-    : await regionaisPermitidas(u);
+    : new Set(repsAutorizados.map(cod));
 
-  if (perfil === "REPRESENTANTE" || perfil === "REP") {
-    clientes = clientes.filter(c =>
-      c.representanteAtual?.some(r =>
-        cod(r.codigo) === repLogin
-      )
-    );
-  } else if (
-    !acessoNacional &&
-    (perfil === "GERENTE" || perfil === "SUPERVISOR")
-  ) {
-    clientes = clientes.filter(c =>
-      c.supervisores?.some(s =>
-        regionaisAutorizadas?.has(cod(s.codigo))
-      )
-    );
-  } else if (!acessoNacional) {
-    clientes = [];
+  const normalizarVinculos = (
+    vinculos: Vinculo[] | undefined
+  ): Vinculo[] => {
+    const resultado = new Map<string, Vinculo>();
+
+    for (const vinculo of vinculos ?? []) {
+      const originalRep = cod(vinculo.codigo);
+      if (!originalRep) continue;
+
+      const normalizado = normalizarRepresentante(
+        originalRep,
+        mapaOficial
+      );
+
+      const oficial = mapaOficial.cadastro.get(normalizado.codigo);
+
+      if (!oficial?.ativo) continue;
+
+      resultado.set(normalizado.codigo, {
+        codigo: normalizado.codigo,
+        nome: oficial.nome_rep || vinculo.nome || normalizado.codigo,
+      });
+    }
+
+    return [...resultado.values()];
+  };
+
+  clientes = clientes.map(cliente => {
+    const atuais = normalizarVinculos(cliente.representanteAtual);
+    const demais = normalizarVinculos(cliente.demaisRepresentantes);
+    const todos = normalizarVinculos(cliente.representantes);
+
+    const visiveis = repsPermitidos === null
+      ? atuais
+      : atuais.filter(r => repsPermitidos.has(cod(r.codigo)));
+
+    const supervisores = new Map<string, Vinculo>();
+
+    for (const rep of visiveis) {
+      const normalizado = normalizarRepresentante(
+        cod(rep.codigo),
+        mapaOficial
+      );
+
+      const supervisor = cod(normalizado.supervisor);
+
+      if (supervisor) {
+        supervisores.set(supervisor, {
+          codigo: supervisor,
+          nome: supervisor,
+        });
+      }
+    }
+
+    return {
+      ...cliente,
+      representanteAtual: visiveis,
+      representantes: repsPermitidos === null
+        ? todos
+        : todos.filter(r => repsPermitidos.has(cod(r.codigo))),
+      demaisRepresentantes: repsPermitidos === null
+        ? demais
+        : demais.filter(r => repsPermitidos.has(cod(r.codigo))),
+      supervisores: [...supervisores.values()],
+    };
+  });
+
+  // Escopo de acesso aplicado antes dos filtros da URL.
+  if (!acessoNacional) {
+    if (repsPermitidos === null || repsPermitidos.size === 0) {
+      clientes = [];
+    } else {
+      clientes = clientes.filter(c =>
+        c.representanteAtual?.some(r =>
+          repsPermitidos.has(cod(r.codigo))
+        )
+      );
+    }
   }
-
-  const repsAutorizados = await representantesPermitidos(u);
 
   if (gerenteFiltro) {
-    clientes = clientes.filter(c => c.supervisores?.some(s => regionaisGerente.has(cod(s.codigo))));
+    clientes = clientes.filter(c =>
+      c.supervisores?.some(s =>
+        regionaisGerente.has(cod(s.codigo))
+      )
+    );
   }
 
-  // Bloquear consulta direta a regional fora da permissao.
   if (
     supervisor &&
     regionaisAutorizadas !== null &&
@@ -167,16 +236,21 @@ export default async function ListaCarteira({ searchParams }: Props) {
     );
   }
 
-  // Bloquear consulta direta a representante nao autorizado.
+  const repFiltro = representante
+    ? normalizarRepresentante(representante, mapaOficial).codigo
+    : "";
+
   if (
-    representante &&
-    repsAutorizados !== null &&
-    !repsAutorizados.includes(representante)
+    repFiltro &&
+    repsPermitidos !== null &&
+    !repsPermitidos.has(repFiltro)
   ) {
     clientes = [];
-  } else if (representante) {
+  } else if (repFiltro) {
     clientes = clientes.filter(c =>
-      c.representanteAtual?.some(r => cod(r.codigo) === representante)
+      c.representanteAtual?.some(r =>
+        cod(r.codigo) === repFiltro
+      )
     );
   }
 

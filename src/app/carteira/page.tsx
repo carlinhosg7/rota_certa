@@ -1,3 +1,4 @@
+import { obterHierarquiaComercial } from "@/lib/hierarquia-comercial-filtros";
 import { listarGerentesRegionais } from "@/lib/carteira-gerentes";
 import { acessoGlobal, regionaisPermitidas, representantesPermitidos } from "@/lib/escopo-acesso";
 import { carregarCarteira2027 } from "../../lib/carteira-2027-data";
@@ -10,7 +11,10 @@ import { redirect } from "next/navigation";
 import Link from "next/link";
 import { validarToken } from "@/lib/auth";
 import Sidebar from "@/components/Sidebar";
+
 import CartaoTaxaReativacao from "@/components/CartaoTaxaReativacao";
+import FiltrosRegionalRepresentante from "@/components/FiltrosRegionalRepresentante";
+import representantesOficiais from "@/lib/representantes-oficiais-2026.json";
 import CartaoClientesReativados from "@/components/CartaoClientesReativados";
 
 export const runtime = "nodejs";
@@ -199,50 +203,62 @@ export default async function CarteiraPage({
       : null;
 
   const repsEscopo = await representantesPermitidos(sessao);
+  const oficiais = representantesOficiais.representantes;
+  const repsAtivosVisiveis = oficiais.filter(r =>
+    (regionaisEscopo === null || regionaisEscopo.has(r.supervisor_codigo)) &&
+    (repsEscopo === null || [r.codigo, ...r.aliases_utilizaveis].some(id => repsEscopo.includes(id))) &&
+    (!gerenteFiltro || regionaisGerente.has(r.supervisor_codigo))
+  );
+  const nomesRegionais: Record<string, string> = {
+    "9902": "CENTRO OESTE", "9907": "SUL", "9914": "NORTE / NORDESTE",
+    "9915": "REM", "9916": "SPC", "9917": "SPI", "9920": "B2B",
+    "9921": "RN - SP/SUL", "9922": "RN - CEO/REM", "9923": "RN - NORTE/NORDESTE"
+  };
+  const supervisoresAtivos = [...new Set(repsAtivosVisiveis.map(r => r.supervisor_codigo))]
+    .sort((a, b) => (nomesRegionais[a] || a).localeCompare(nomesRegionais[b] || b, "pt-BR"))
+    .map(id => ({ codigo: id, nome: nomesRegionais[id] || id }));
+  const representantesAtivos = repsAtivosVisiveis.map(r => ({
+    codigo: r.codigo, nome: r.nome, supervisor_codigo: r.supervisor_codigo
+  })).sort((a, b) => a.nome.localeCompare(b.nome, "pt-BR"));
+  const identificadoresDoRep = (codigoAtivo: string): string[] => {
+    const encontrado = oficiais.find(r => r.codigo === codigoAtivo);
+    return encontrado ? [encontrado.codigo, ...encontrado.aliases_utilizaveis] : [];
+  };
 
-  const supervisores = new Map<string, string>();
-  const representantes = new Map<string, string>();
 
-  for (const c of clientes) {
-    for (const s of c.supervisores || []) {
-      const id = codigo(s.codigo);
-      if (id && (regionaisEscopo === null || regionaisEscopo.has(id))) {
-        supervisores.set(id, s.nome);
-      }
-    }
-
-    for (const r of c.representantes || []) {
-      const id = codigo(r.codigo);
-      if (id && (repsEscopo === null || repsEscopo.includes(id))) {
-        representantes.set(id, r.nome);
-      }
-    }
-  }
+  const hierarquia = await obterHierarquiaComercial(sessao);
+  const supervisores = new Map<string, string>(hierarquia.supervisores.map(s => [s.codigo,s.nome]));
+  const representantes = new Map<string, string>(hierarquia.representantes
+    .filter(r => !codigo(parametros.supervisor) || r.supervisor === codigo(parametros.supervisor))
+    .map(r => [r.codigo,r.nome]));
 
   const supervisorFiltro = codigo(parametros.supervisor);
   const representanteFiltro = codigo(parametros.representante);
   const receitaFiltro = String(parametros.receita ?? "").toUpperCase();
 
   if (supervisorFiltro) {
-    clientes = regionaisEscopo !== null &&
-      !regionaisEscopo.has(supervisorFiltro)
-      ? []
-      : clientes.filter(c =>
-          c.supervisores?.some(s =>
-            codigo(s.codigo) === supervisorFiltro
-          )
-        );
+    const regionalAtiva = repsAtivosVisiveis.some(r => r.supervisor_codigo === supervisorFiltro);
+    if (!regionalAtiva) {
+      clientes = [];
+    } else {
+      const codigosRegional = new Set(repsAtivosVisiveis
+        .filter(r => r.supervisor_codigo === supervisorFiltro)
+        .flatMap(r => [r.codigo, ...r.aliases_utilizaveis]));
+      clientes = clientes.filter(c => (c.representantes || []).some(r =>
+        codigosRegional.has(codigo(r.codigo))
+      ));
+    }
   }
 
   if (representanteFiltro) {
-    clientes = repsEscopo !== null &&
-      !repsEscopo.includes(representanteFiltro)
-      ? []
-      : clientes.filter(c =>
-          c.representantes?.some(r =>
-            codigo(r.codigo) === representanteFiltro
-          )
-        );
+    const codigosDoSelecionado = new Set(
+      repsAtivosVisiveis.some(r => r.codigo === representanteFiltro)
+        ? identificadoresDoRep(representanteFiltro)
+        : []
+    );
+    clientes = clientes.filter(c => (c.representantes || []).some(r =>
+      codigosDoSelecionado.has(codigo(r.codigo))
+    ));
   }
 
   // PAINEL_RECEITA_2027: contagem por cliente e Grupo Cliente distinto.
@@ -422,41 +438,12 @@ export default async function CarteiraPage({
                      {gerentesDisponiveis.map(g => <option key={g} value={g}>{g}</option>)}
                    </select>
                  </label>
-                <label style={{display: "grid", gap: 6}}>
-                  <span style={{fontSize: 12}}>Supervisor</span>
-                  <select
-                    name="supervisor"
-                    defaultValue={supervisorFiltro}
-                    style={{padding: 10, minWidth: 200}}
-                  >
-                    <option value="">Todos</option>
-                    {[...supervisores.entries()]
-                      .sort((a, b) => a[1].localeCompare(b[1]))
-                      .map(([id, nome]) => (
-                        <option key={id} value={id}>
-                          {nome || id} ({id})
-                        </option>
-                      ))}
-                  </select>
-                </label>
-
-                <label style={{display: "grid", gap: 6}}>
-                  <span style={{fontSize: 12}}>Representante</span>
-                  <select
-                    name="representante"
-                    defaultValue={representanteFiltro}
-                    style={{padding: 10, minWidth: 220}}
-                  >
-                    <option value="">Todos</option>
-                    {[...representantes.entries()]
-                      .sort((a, b) => a[1].localeCompare(b[1]))
-                      .map(([id, nome]) => (
-                        <option key={id} value={id}>
-                          {nome || id} ({id})
-                        </option>
-                      ))}
-                  </select>
-                </label>
+                <FiltrosRegionalRepresentante
+                  supervisorAtual={supervisorFiltro}
+                  representanteAtual={representanteFiltro}
+                  supervisores={supervisoresAtivos}
+                  representantes={representantesAtivos}
+                />
                 {mostrarReceita && (
                   <label style={{display: "grid", gap: 6}}>
                     <span style={{fontSize: 12}}>Situação Receita Federal</span>

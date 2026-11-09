@@ -1,4 +1,5 @@
 import { carregarCarteira2027 } from "../../../lib/carteira-2027-data";
+import { obterHierarquiaComercial } from "@/lib/hierarquia-comercial-filtros";
 import { listarGerentesRegionais } from "../../../lib/carteira-gerentes";
 import "server-only";
 
@@ -407,19 +408,11 @@ export default async function VisaoGrupos({ searchParams }: Props) {
 
 
   // Opcoes respeitam a carteira permitida ao usuario autenticado.
-  const opcoesSupervisores = new Map<string, string>();
-  const opcoesRepresentantes = new Map<string, string>();
-
-  for (const c of clientes) {
-    for (const s of c.supervisores || []) {
-      const id = codigo(s.codigo);
-      if (id && (acessoNacional || (perfil === "REPRESENTANTE" || perfil === "REP") || regionaisAutorizadas?.has(id))) opcoesSupervisores.set(id, texto(s.nome) || id);
-    }
-    for (const r of c.representanteAtual || []) {
-      const id = codigo(r.codigo);
-      if (id && (representantesAutorizados === null || representantesAutorizados.includes(id))) opcoesRepresentantes.set(id, texto(r.nome) || id);
-    }
-  }
+  const hierarquia = await obterHierarquiaComercial(usuarioAutenticado);
+  const opcoesSupervisores = new Map<string, string>(hierarquia.supervisores.map(s => [s.codigo, `${s.codigo} - ${s.nome}`]));
+  const opcoesRepresentantes = new Map<string, string>(hierarquia.representantes
+    .filter(r => !supervisorFiltro || r.supervisor === supervisorFiltro)
+    .map(r => [r.codigo, `${r.codigo} - ${r.nome}`]));
 
   const gruposPainel = grupos
     .map(g => ({

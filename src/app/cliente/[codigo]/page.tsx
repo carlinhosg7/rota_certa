@@ -809,35 +809,55 @@ const janelaComercial = await calcularJanelaCompraFaturamento(
         b.scoreSimilaridade - a.scoreSimilaridade
       );
 
+  // Amostra por universo comercial, sem alterar quem pertence a cada universo.
+  // Minha carteira prioriza similaridade; estado/regional distribuem a amostra
+  // para evitar sempre os mesmos 80 primeiros do ranking global.
+  const amostrarPotencialV11 = <T,>(
+    candidatos: T[],
+    tipo: "carteira" | "estado" | "regional"
+  ): T[] => {
+    const limite = 80;
+    if (candidatos.length <= limite) return candidatos;
+    if (tipo === "carteira") return candidatos.slice(0, limite);
+    const deslocamento = tipo === "estado" ? 0.75 : 0.25;
+    const passo = candidatos.length / limite;
+    return Array.from({ length: limite }, (_, indice) =>
+      candidatos[Math.min(
+        candidatos.length - 1,
+        Math.floor((indice + deslocamento) * passo)
+      )]
+    );
+  };
+
   const gruposPotencialV4 = [
     {
       id: "carteira",
       titulo: "Minha carteira",
       descricao: "Clientes ativos do mesmo representante",
-      clientes: candidatosAutorizadosV4.filter(c => {
+      clientes: amostrarPotencialV11(candidatosAutorizadosV4.filter(c => {
         const cad = cadastroV4.get(c.codigo);
         return cad && representantesAtuaisV10(cad)
           .some(rep => repsAlvoV10.has(rep));
-      }).slice(0, 80),
+      }), "carteira"),
     },
     {
       id: "estado",
       titulo: "Meu estado",
       descricao: "Clientes ativos da UF " + ufAlvoV4,
-      clientes: candidatosAutorizadosV4.filter(c => {
+      clientes: amostrarPotencialV11(candidatosAutorizadosV4.filter(c => {
         const cad = cadastroV4.get(c.codigo);
         return Boolean(
           ufAlvoV4 &&
           String(cad?.uf || "")
             .trim().toUpperCase() === ufAlvoV4
         );
-      }).slice(0, 80),
+      }), "estado"),
     },
     {
       id: "regional",
       titulo: "Minha regional",
       descricao: "Clientes ativos da regional " + supAlvoV4,
-      clientes: candidatosAutorizadosV4.filter(c => {
+      clientes: amostrarPotencialV11(candidatosAutorizadosV4.filter(c => {
         const cad = cadastroV4.get(c.codigo);
         return Boolean(
           cad &&
@@ -846,7 +866,7 @@ const janelaComercial = await calcularJanelaCompraFaturamento(
             supDoRepV10(rep) === supAlvoV4
           )
         );
-      }).slice(0, 80),
+      }), "regional"),
     },
   ];
 

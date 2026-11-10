@@ -71,18 +71,15 @@ export async function buscarVendasClientes360(
     return resultado;
   }
 
-  for (
-    let grupoInicio = 0;
-    grupoInicio < codigos.length;
-    grupoInicio += TAMANHO_GRUPO
-  ) {
-    const grupo = codigos.slice(
-      grupoInicio,
-      grupoInicio + TAMANHO_GRUPO
-    );
+  // Quatro grupos paralelos no maximo para evitar dezenas de viagens sequenciais.
+  // Cada grupo contem codigos diferentes; a ordem de lotes de cada cliente e preservada.
+  const grupos: string[][] = [];
+  for (let i = 0; i < codigos.length; i += TAMANHO_GRUPO) {
+    grupos.push(codigos.slice(i, i + TAMANHO_GRUPO));
+  }
 
+  const consultarGrupo = async (grupo: string[]) => {
     let inicio = 0;
-
     while (true) {
       const { data, error } = await supabase
         .from("kidy_360_vendas")
@@ -91,61 +88,29 @@ export async function buscarVendasClientes360(
         .in("codigo_cliente", grupo)
         .order("codigo_cliente", { ascending: true })
         .order("lote", { ascending: true })
-        .range(
-          inicio,
-          inicio + TAMANHO_PAGINA - 1
-        );
+        .range(inicio, inicio + TAMANHO_PAGINA - 1);
 
       if (error) {
-        throw new Error(
-          "Erro ao buscar vendas 360 em lote: " +
-            error.message
-        );
+        throw new Error("Erro ao buscar vendas 360 em lote: " + error.message);
       }
-
-      if (!data || data.length === 0) {
-        break;
-      }
+      if (!data || data.length === 0) break;
 
       for (const registro of data) {
-        const codigo = cleanCode(
-          registro.codigo_cliente
-        );
-
+        const codigo = cleanCode(registro.codigo_cliente);
         const vendas = resultado.get(codigo);
-
-        if (!vendas) {
-          continue;
-        }
-
-        if (!Array.isArray(registro.dados)) {
-          continue;
-        }
-
+        if (!vendas || !Array.isArray(registro.dados)) continue;
         for (const item of registro.dados) {
-          if (
-            !item ||
-            typeof item !== "object" ||
-            Array.isArray(item)
-          ) {
-            continue;
-          }
-
-          vendas.push(
-            converterVenda(
-              item as Record<string, unknown>,
-              codigo
-            )
-          );
+          if (!item || typeof item !== "object" || Array.isArray(item)) continue;
+          vendas.push(converterVenda(item as Record<string, unknown>, codigo));
         }
       }
-
-      if (data.length < TAMANHO_PAGINA) {
-        break;
-      }
-
+      if (data.length < TAMANHO_PAGINA) break;
       inicio += TAMANHO_PAGINA;
     }
+  };
+
+  for (let i = 0; i < grupos.length; i += 4) {
+    await Promise.all(grupos.slice(i, i + 4).map(consultarGrupo));
   }
 
   return resultado;
@@ -203,58 +168,34 @@ export async function buscarPerfis360(): Promise<
   carregamentoPerfis360 = (async () => {
     const resultado: PerfilHistorico360[] = [];
 
-    for (
-      let inicio = 0;
-      ;
-      inicio += TAMANHO_PAGINA
-    ) {
-      const { data, error } = await supabase
-        .from("kidy_360_perfis")
-        .select(
-          "codigo_cliente,valor_historico,pares_historico,pedidos,mix"
-        )
-        .eq("snapshot_id", SNAPSHOT_ID)
-        .order("codigo_cliente", {
-          ascending: true,
-        })
-        .range(
-          inicio,
-          inicio + TAMANHO_PAGINA - 1
-        );
-
-      if (error) {
-        throw new Error(
-          "Erro ao consultar perfis 360: " +
-            error.message
-        );
-      }
-
-      if (!data || data.length === 0) {
-        break;
-      }
-
-      for (const p of data) {
-        resultado.push({
-          codigo_cliente: cleanCode(
-            p.codigo_cliente
-          ),
-          valor_historico: Number(
-            p.valor_historico ?? 0
-          ),
-          pares_historico: Number(
-            p.pares_historico ?? 0
-          ),
-          pedidos: Number(
-            p.pedidos ?? 0
-          ),
-          mix: Number(
-            p.mix ?? 0
-          ),
-        });
-      }
-
-      if (data.length < TAMANHO_PAGINA) {
-        break;
+    // Ler 18.139 perfis em ondas de ate quatro paginas, preservando a ordem.
+    // A contagem final continua obrigatoria para detectar leitura incompleta.
+    const TOTAL_PERFIS = 18139;
+    const inicios = Array.from(
+      { length: Math.ceil(TOTAL_PERFIS / TAMANHO_PAGINA) },
+      (_, i) => i * TAMANHO_PAGINA
+    );
+    for (let i = 0; i < inicios.length; i += 4) {
+      const paginas = await Promise.all(inicios.slice(i, i + 4).map(async (inicio) => {
+        const { data, error } = await supabase
+          .from("kidy_360_perfis")
+          .select("codigo_cliente,valor_historico,pares_historico,pedidos,mix")
+          .eq("snapshot_id", SNAPSHOT_ID)
+          .order("codigo_cliente", { ascending: true })
+          .range(inicio, inicio + TAMANHO_PAGINA - 1);
+        if (error) throw new Error("Erro ao consultar perfis 360: " + error.message);
+        return data ?? [];
+      }));
+      for (const pagina of paginas) {
+        for (const p of pagina) {
+          resultado.push({
+            codigo_cliente: cleanCode(p.codigo_cliente),
+            valor_historico: Number(p.valor_historico ?? 0),
+            pares_historico: Number(p.pares_historico ?? 0),
+            pedidos: Number(p.pedidos ?? 0),
+            mix: Number(p.mix ?? 0),
+          });
+        }
       }
     }
 

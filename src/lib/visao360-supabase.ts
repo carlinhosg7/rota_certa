@@ -55,33 +55,25 @@ export async function buscarVendasClientes360(
 ): Promise<Map<string, Venda[]>> {
   const codigos = [
     ...new Set(
-      codigosClientes
-        .map((codigo) => cleanCode(codigo))
-        .filter(Boolean)
+      codigosClientes.map((codigo) => cleanCode(codigo)).filter(Boolean)
     ),
   ];
 
   const resultado = new Map<string, Venda[]>();
+  for (const codigo of codigos) resultado.set(codigo, []);
+  if (codigos.length === 0) return resultado;
 
-  for (const codigo of codigos) {
-    resultado.set(codigo, []);
+  // A busca anterior fazia um grupo por vez. Limitar concorrencia
+  // reduz a latencia sem enviar todos os pedidos simultaneamente.
+  const grupos: string[][] = [];
+  for (let i = 0; i < codigos.length; i += TAMANHO_GRUPO) {
+    grupos.push(codigos.slice(i, i + TAMANHO_GRUPO));
   }
 
-  if (codigos.length === 0) {
-    return resultado;
-  }
-
-  for (
-    let grupoInicio = 0;
-    grupoInicio < codigos.length;
-    grupoInicio += TAMANHO_GRUPO
-  ) {
-    const grupo = codigos.slice(
-      grupoInicio,
-      grupoInicio + TAMANHO_GRUPO
-    );
-
+  const buscarGrupo = async (grupo: string[]) => {
     let inicio = 0;
+    const itens = new Map<string, Venda[]>();
+    for (const codigo of grupo) itens.set(codigo, []);
 
     while (true) {
       const { data, error } = await supabase
@@ -91,63 +83,44 @@ export async function buscarVendasClientes360(
         .in("codigo_cliente", grupo)
         .order("codigo_cliente", { ascending: true })
         .order("lote", { ascending: true })
-        .range(
-          inicio,
-          inicio + TAMANHO_PAGINA - 1
-        );
+        .range(inicio, inicio + TAMANHO_PAGINA - 1);
 
       if (error) {
-        throw new Error(
-          "Erro ao buscar vendas 360 em lote: " +
-            error.message
-        );
+        throw new Error("Erro ao buscar vendas 360 em lote: " + error.message);
       }
-
-      if (!data || data.length === 0) {
-        break;
-      }
+      if (!data || data.length === 0) break;
 
       for (const registro of data) {
-        const codigo = cleanCode(
-          registro.codigo_cliente
-        );
-
-        const vendas = resultado.get(codigo);
-
-        if (!vendas) {
-          continue;
-        }
-
-        if (!Array.isArray(registro.dados)) {
-          continue;
-        }
-
+        const codigo = cleanCode(registro.codigo_cliente);
+        const vendas = itens.get(codigo);
+        if (!vendas || !Array.isArray(registro.dados)) continue;
         for (const item of registro.dados) {
-          if (
-            !item ||
-            typeof item !== "object" ||
-            Array.isArray(item)
-          ) {
-            continue;
-          }
-
-          vendas.push(
-            converterVenda(
-              item as Record<string, unknown>,
-              codigo
-            )
-          );
+          if (!item || typeof item !== "object" || Array.isArray(item)) continue;
+          vendas.push(converterVenda(item as Record<string, unknown>, codigo));
         }
       }
-
-      if (data.length < TAMANHO_PAGINA) {
-        break;
-      }
-
+      if (data.length < TAMANHO_PAGINA) break;
       inicio += TAMANHO_PAGINA;
     }
-  }
+    return itens;
+  };
 
+  // No maximo 5 grupos simultaneos (8 clientes por grupo).
+  let proximo = 0;
+  const trabalhadores = Array.from(
+    { length: Math.min(5, grupos.length) },
+    async () => {
+      while (true) {
+        const indice = proximo++;
+        if (indice >= grupos.length) return;
+        const encontrados = await buscarGrupo(grupos[indice]);
+        for (const [codigo, vendas] of encontrados) {
+          resultado.set(codigo, vendas);
+        }
+      }
+    }
+  );
+  await Promise.all(trabalhadores);
   return resultado;
 }
 
@@ -203,60 +176,45 @@ export async function buscarPerfis360(): Promise<
   carregamentoPerfis360 = (async () => {
     const resultado: PerfilHistorico360[] = [];
 
-    for (
-      let inicio = 0;
-      ;
-      inicio += TAMANHO_PAGINA
-    ) {
-      const { data, error } = await supabase
-        .from("kidy_360_perfis")
-        .select(
-          "codigo_cliente,valor_historico,pares_historico,pedidos,mix"
-        )
-        .eq("snapshot_id", SNAPSHOT_ID)
-        .order("codigo_cliente", {
-          ascending: true,
-        })
-        .range(
-          inicio,
-          inicio + TAMANHO_PAGINA - 1
-        );
+    // O snapshot completo tem 18.139 perfis. Buscar paginas em paralelo,
+    // mantendo a ordem de leitura e uma concorrencia controlada.
+    const paginas = Array.from(
+      { length: Math.ceil(18139 / TAMANHO_PAGINA) },
+      (_, i) => i * TAMANHO_PAGINA
+    );
+    const blocos: PerfilHistorico360[][] = new Array(paginas.length);
+    let proximaPagina = 0;
 
-      if (error) {
-        throw new Error(
-          "Erro ao consultar perfis 360: " +
-            error.message
-        );
-      }
+    const trabalhadores = Array.from(
+      { length: Math.min(5, paginas.length) },
+      async () => {
+        while (true) {
+          const indice = proximaPagina++;
+          if (indice >= paginas.length) return;
+          const inicio = paginas[indice];
+          const { data, error } = await supabase
+            .from("kidy_360_perfis")
+            .select("codigo_cliente,valor_historico,pares_historico,pedidos,mix")
+            .eq("snapshot_id", SNAPSHOT_ID)
+            .order("codigo_cliente", { ascending: true })
+            .range(inicio, inicio + TAMANHO_PAGINA - 1);
 
-      if (!data || data.length === 0) {
-        break;
+          if (error) {
+            throw new Error("Erro ao consultar perfis 360: " + error.message);
+          }
+          blocos[indice] = (data ?? []).map((p) => ({
+            codigo_cliente: cleanCode(p.codigo_cliente),
+            valor_historico: Number(p.valor_historico ?? 0),
+            pares_historico: Number(p.pares_historico ?? 0),
+            pedidos: Number(p.pedidos ?? 0),
+            mix: Number(p.mix ?? 0),
+          }));
+        }
       }
+    );
 
-      for (const p of data) {
-        resultado.push({
-          codigo_cliente: cleanCode(
-            p.codigo_cliente
-          ),
-          valor_historico: Number(
-            p.valor_historico ?? 0
-          ),
-          pares_historico: Number(
-            p.pares_historico ?? 0
-          ),
-          pedidos: Number(
-            p.pedidos ?? 0
-          ),
-          mix: Number(
-            p.mix ?? 0
-          ),
-        });
-      }
-
-      if (data.length < TAMANHO_PAGINA) {
-        break;
-      }
-    }
+    await Promise.all(trabalhadores);
+    for (const bloco of blocos) resultado.push(...bloco);
 
     // O snapshot atual possui 18.139 perfis.
     // Mantemos a validacao para detectar leitura parcial.

@@ -809,6 +809,29 @@ const janelaComercial = await calcularJanelaCompraFaturamento(
         b.scoreSimilaridade - a.scoreSimilaridade
       );
 
+  // Tres universos distintos e sem sobreposicao na amostra:
+  // 1. carteira: mesmo representante;
+  // 2. regional: outros representantes da regional do cliente;
+  // 3. estado: outras regionais da mesma UF.
+  // Se o usuario nao tiver acesso a um universo, a amostra fica vazia.
+  const mesmoRepresentanteV4 = (
+    cad: (typeof carteiraComparacao2027.clientes)[number]
+  ) => representantesAtuaisV10(cad)
+    .some(rep => repsAlvoV10.has(rep));
+
+  const mesmaRegionalV4 = (
+    cad: (typeof carteiraComparacao2027.clientes)[number]
+  ) => Boolean(
+    supAlvoV4 && representantesAtuaisV10(cad)
+      .some(rep => supDoRepV10(rep) === supAlvoV4)
+  );
+
+  const mesmoEstadoV4 = (
+    cad: (typeof carteiraComparacao2027.clientes)[number]
+  ) => Boolean(
+    ufAlvoV4 && String(cad.uf || "").trim().toUpperCase() === ufAlvoV4
+  );
+
   const gruposPotencialV4 = [
     {
       id: "carteira",
@@ -816,36 +839,25 @@ const janelaComercial = await calcularJanelaCompraFaturamento(
       descricao: "Clientes ativos do mesmo representante",
       clientes: candidatosAutorizadosV4.filter(c => {
         const cad = cadastroV4.get(c.codigo);
-        return cad && representantesAtuaisV10(cad)
-          .some(rep => repsAlvoV10.has(rep));
+        return Boolean(cad && mesmoRepresentanteV4(cad));
       }).slice(0, 80),
     },
     {
       id: "estado",
       titulo: "Meu estado",
-      descricao: "Clientes ativos da UF " + ufAlvoV4,
+      descricao: "Outras regionais da UF " + ufAlvoV4,
       clientes: candidatosAutorizadosV4.filter(c => {
         const cad = cadastroV4.get(c.codigo);
-        return Boolean(
-          ufAlvoV4 &&
-          String(cad?.uf || "")
-            .trim().toUpperCase() === ufAlvoV4
-        );
+        return Boolean(cad && mesmoEstadoV4(cad) && !mesmaRegionalV4(cad) && !mesmoRepresentanteV4(cad));
       }).slice(0, 80),
     },
     {
       id: "regional",
       titulo: "Minha regional",
-      descricao: "Clientes ativos da regional " + supAlvoV4,
+      descricao: "Outros representantes da regional " + supAlvoV4,
       clientes: candidatosAutorizadosV4.filter(c => {
         const cad = cadastroV4.get(c.codigo);
-        return Boolean(
-          cad &&
-          supAlvoV4 &&
-          representantesAtuaisV10(cad).some(rep =>
-            supDoRepV10(rep) === supAlvoV4
-          )
-        );
+        return Boolean(cad && mesmaRegionalV4(cad) && !mesmoRepresentanteV4(cad));
       }).slice(0, 80),
     },
   ];

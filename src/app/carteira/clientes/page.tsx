@@ -256,7 +256,7 @@ export default async function ListaCarteira({ searchParams }: Props) {
 
   // Receita fiscal: gestores podem consultar baixadas somente na visão fiscal.
   // Todas as carteiras comerciais e seus indicadores financeiros excluem BAIXADA.
-  if (!(mostrarReceita && receita === "BAIXADA")) {
+  if (!(mostrarReceita && receita === "BAIXADA" && filtro === "todos")) {
     clientes = clientes.filter(c => String(c.situacaoEmpresa || "").trim().toUpperCase() !== "BAIXADA");
   }
   const carteirasFinanceiras: Record<string, { situacao: string; tipo: "bloqueados" | "limite" }> = {

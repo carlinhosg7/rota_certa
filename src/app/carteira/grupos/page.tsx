@@ -452,14 +452,18 @@ export default async function VisaoGrupos({ searchParams }: Props) {
 
   // A consulta cadastral BAIXADA continua disponivel somente no painel fiscal.
   // Para as carteiras comerciais, nenhum estabelecimento com Receita BAIXADA conta.
-  if (!receita || receita !== "BAIXADA") {
-    for (const g of gruposPainel) {
-      g.clientes = g.clientes.filter(c =>
-        String(c.situacaoEmpresa || "").replaceAll("_", " ").toUpperCase() !== "BAIXADA"
-      );
-    }
-    for (let i = gruposPainel.length - 1; i >= 0; i--) {
-      if (!gruposPainel[i].clientes.length) gruposPainel.splice(i, 1);
+  for (const g of gruposPainel) {
+    g.clientes = g.clientes.filter(c =>
+      String(c.situacaoEmpresa || "")
+        .replaceAll("_", " ")
+        .trim()
+        .toUpperCase() !== "BAIXADA"
+    );
+  }
+
+  for (let i = gruposPainel.length - 1; i >= 0; i--) {
+    if (!gruposPainel[i].clientes.length) {
+      gruposPainel.splice(i, 1);
     }
   }
 

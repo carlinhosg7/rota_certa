@@ -1329,23 +1329,37 @@ function registrarMemoria(etapa: string): void {
 // Bases comerciais leves para a Visao 360.
 // Nao realiza leitura de Parquets.
 export async function carregarBasesLeves360() {
-  // Inicializar o catalogo do Drive antes de ler os arquivos.
-  // Nao prepara nem carrega os Parquets de vendas.
-  if (
-    (process.env.KIDY_DATA_SOURCE || "github").toLowerCase() === "drive"
-  ) {
+  const inicioTotal = performance.now();
+  const origem = (process.env.KIDY_DATA_SOURCE || "github").toLowerCase();
+
+  const inicioCatalogo = performance.now();
+
+  if (origem === "drive") {
     await atualizarCatalogoDrive();
   } else {
     await prepararBasesGitHub();
   }
 
+  console.log("[DIAG360] Catalogo:", Math.round(performance.now() - inicioCatalogo), "ms");
+
+  const medir = async <T>(nome: string, tarefa: () => Promise<T>): Promise<T> => {
+    const inicio = performance.now();
+    try {
+      return await tarefa();
+    } finally {
+      console.log("[DIAG360]", nome + ":", Math.round(performance.now() - inicio), "ms");
+    }
+  };
+
   const [carteira, financeiro, produtosAutorizados, nomesReferencias, mapaRepresentantes] = await Promise.all([
-    carregarCarteiraBase(),
-    carregarFinanceiro(),
-    carregarProdutosAutorizados(),
-    carregarNomesReferencias(),
-    carregarMapaRepresentantes()
+    medir("Carteira", carregarCarteiraBase),
+    medir("Financeiro", carregarFinanceiro),
+    medir("Produtos", carregarProdutosAutorizados),
+    medir("Referencias", carregarNomesReferencias),
+    medir("Representantes", carregarMapaRepresentantes)
   ]);
+
+  console.log("[DIAG360] Total bases:", Math.round(performance.now() - inicioTotal), "ms");
 
   return {
     carteira,
@@ -1355,7 +1369,6 @@ export async function carregarBasesLeves360() {
     mapaRepresentantes
   };
 }
-
 // Carteira normalizada para a Visao 360, sem carregar Parquets.
 export async function carregarCarteiraOficial360() {
   const bases = await carregarBasesLeves360();

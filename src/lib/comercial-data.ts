@@ -1,3 +1,4 @@
+import { carregarCarteiraEspelho360 } from "./carteira-espelho-360";
 import { listarClientesExcluidos } from "./clientes-excluidos";
 import fs from "fs";
 import {
@@ -1365,7 +1366,16 @@ export async function carregarBasesLeves360() {
   };
 
   const [carteira, financeiro, produtosAutorizados, nomesReferencias, mapaRepresentantes] = await Promise.all([
-    medir("Carteira", carregarCarteiraBase),
+    medir("Carteira", async () => {
+      // Desativado por padrao. Ativacao exige KIDY_CARTEIRA_ESPELHO=1.
+      if (process.env.KIDY_CARTEIRA_ESPELHO !== "1") return carregarCarteiraBase();
+      try {
+        return await carregarCarteiraEspelho360();
+      } catch (e) {
+        console.error("[ESPELHO360] Falhou, voltando ao Drive:", e);
+        return carregarCarteiraBase();
+      }
+    }),
     medir("Financeiro", carregarFinanceiro),
     medir("Produtos", carregarProdutosAutorizados),
     medir("Referencias", carregarNomesReferencias),

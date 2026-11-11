@@ -1,0 +1,118 @@
+// ESPELHO360_V2_SAFE_READER
+import "server-only";
+import { supabase } from "./supabase";
+import { listarClientesExcluidos } from "./clientes-excluidos";
+
+// Opt-in somente: o codigo chamador mantem Drive como fallback.
+// Cada sincronizacao gera um lote novo; usar o mais recente VALIDADO.
+// O prazo impede uso indefinido de um espelho desatualizado.
+const MAX_IDADE_HORAS = 24;
+const PAGINA = 1000;
+const PARALELISMO = 3;
+
+type LinhaEspelho = {
+  codigo_cliente: string;
+  codigo_representante: string;
+  razao: string;
+  codigo_supervisor: string;
+  cidade: string;
+  uf: string;
+  city_key: string;
+};
+
+export type CarteiraEspelho360 = {
+  codigo: string;
+  rep: string;
+  razao: string;
+  sup: string;
+  cidade: string;
+  uf: string;
+  cityKey: string;
+  limite: number;
+  bloqueio: string;
+};
+
+function codigo(v: unknown): string {
+  return String(v ?? "").trim().replace(/\.0+$/, "");
+}
+
+export async function carregarCarteiraEspelho360(): Promise<CarteiraEspelho360[]> {
+  const inicio = performance.now();
+  const { data: lote, error: erroLote } = await supabase
+    .from("kidy_360_carteira_espelho_lotes")
+    .select("lote_id,criado_em,status,total_registros,arquivo_sha256")
+    .eq("status", "VALIDADO")
+    .order("criado_em", { ascending: false })
+    .limit(1)
+    .maybeSingle();
+
+  if (erroLote || !lote) {
+    throw new Error("Nao ha lote validado do espelho: " + (erroLote?.message ?? "nenhum"));
+  }
+  const total = Number(lote.total_registros);
+  if (!Number.isSafeInteger(total) || total < 1000 || total > 100000) {
+    throw new Error("Contagem suspeita do espelho: " + lote.total_registros);
+  }
+  if (!/^[a-f0-9]{64}$/i.test(String(lote.arquivo_sha256 ?? ""))) {
+    throw new Error("Lote sem SHA256 de origem valido");
+  }
+  const criadoEm = Date.parse(String(lote.criado_em ?? ""));
+  const idadeMs = Date.now() - criadoEm;
+  if (!Number.isFinite(criadoEm) || idadeMs < -5 * 60_000 || idadeMs > MAX_IDADE_HORAS * 3600_000) {
+    throw new Error("Espelho desatualizado ou sem data confiavel; usar Drive. Lote: " + lote.lote_id);
+  }
+
+  const { count, error: erroContagem } = await supabase
+    .from("kidy_360_carteira_espelho_clientes")
+    .select("codigo_cliente", { count: "exact", head: true })
+    .eq("lote_id", lote.lote_id);
+  if (erroContagem || count !== total) {
+    throw new Error("Contagem divergente: " + (erroContagem?.message ?? `${count} != ${total}`));
+  }
+
+  const linhas: LinhaEspelho[] = [];
+  const paginas = Math.ceil(total / PAGINA);
+  for (let base = 0; base < paginas; base += PARALELISMO) {
+    const indices = Array.from({ length: Math.min(PARALELISMO, paginas - base) }, (_, i) => base + i);
+    const respostas = await Promise.all(indices.map(async indice => {
+      const { data, error } = await supabase
+        .from("kidy_360_carteira_espelho_clientes")
+        .select("codigo_cliente,codigo_representante,razao,codigo_supervisor,cidade,uf,city_key")
+        .eq("lote_id", lote.lote_id)
+        .order("codigo_cliente", { ascending: true })
+        .order("codigo_representante", { ascending: true })
+        .range(indice * PAGINA, Math.min((indice + 1) * PAGINA, total) - 1);
+      if (error) throw new Error(`Erro pagina espelho ${indice}: ${error.message}`);
+      const esperado = Math.min(PAGINA, total - indice * PAGINA);
+      if (!data || data.length !== esperado) throw new Error(`Pagina incompleta: ${indice} (${data?.length ?? 0}/${esperado})`);
+      return data as LinhaEspelho[];
+    }));
+    for (const p of respostas) linhas.push(...p);
+  }
+  if (linhas.length !== total) throw new Error("Leitura incompleta do espelho");
+  const chaves = new Set(linhas.map(c => `${codigo(c.codigo_cliente)}|${codigo(c.codigo_representante)}`));
+  if (chaves.size !== total) throw new Error("Chaves duplicadas no espelho");
+
+  // O espelho contem as exclusoes do dia da importacao.
+  // Reaplica exclusoes ATUAIS em cada leitura para nao reativar cliente excluido depois.
+  const excluidosAtuais = await listarClientesExcluidos();
+  const carteira = linhas
+    .filter(c => !excluidosAtuais.has(codigo(c.codigo_cliente)))
+    .map(c => ({
+      codigo: codigo(c.codigo_cliente),
+      rep: codigo(c.codigo_representante),
+      razao: String(c.razao ?? ""),
+      sup: codigo(c.codigo_supervisor),
+      cidade: String(c.cidade ?? ""),
+      uf: String(c.uf ?? "").trim().toUpperCase(),
+      cityKey: String(c.city_key ?? ""),
+      limite: 0,
+      bloqueio: "",
+    }));
+  if (carteira.length < 1000) throw new Error("Espelho sem clientes apos exclusoes");
+  console.log("[ESPELHO360 V2] Lote:", lote.lote_id,
+    "linhas:", total, "clientes apos exclusoes atuais:", carteira.length,
+    "idadeHoras:", Math.round(idadeMs / 3600000 * 10) / 10,
+    "tempoMs:", Math.round(performance.now() - inicio));
+  return carteira;
+}

@@ -318,12 +318,15 @@ async function prepararBasesGitHub() {
  * Não depende mais de D:\...\data\base clientes.xlsx.
  */
 async function carregarCarteiraBase(): Promise<Carteira[]> {
+  const diagInicio = performance.now();
   const nome = "base clientes.xlsx";
   const url = githubUrl(nome);
 
   console.log(`[CARTEIRA] Baixando ${nome} diretamente do GitHub...`);
 
+  const diagDownload = performance.now();
   const buffer = await lerArquivoComercial(nome);
+  console.log("[DIAG360 CARTEIRA] Arquivo (cache/download):", Math.round(performance.now() - diagDownload), "ms");
 
   if (!buffer.length) {
     throw new Error(`${nome} foi baixado, mas está vazio.`);
@@ -333,6 +336,7 @@ async function carregarCarteiraBase(): Promise<Carteira[]> {
     `[CARTEIRA] ${nome} recebido (${buffer.length.toLocaleString("pt-BR")} bytes)`
   );
 
+  const diagExcel = performance.now();
   let wb: XLSX.WorkBook;
 
   try {
@@ -348,6 +352,8 @@ async function carregarCarteiraBase(): Promise<Carteira[]> {
     );
   }
 
+  console.log("[DIAG360 CARTEIRA] Interpretacao XLSX:", Math.round(performance.now() - diagExcel), "ms");
+  const diagPlanilha = performance.now();
   let rows: any[][] = [];
 
   for (const sn of wb.SheetNames) {
@@ -376,6 +382,8 @@ async function carregarCarteiraBase(): Promise<Carteira[]> {
     );
   }
 
+  console.log("[DIAG360 CARTEIRA] Extracao planilha:", Math.round(performance.now() - diagPlanilha), "ms");
+  const diagNormalizacao = performance.now();
   const headers = rows[0].map((x) => String(x ?? ""));
   const out: Carteira[] = [];
 
@@ -420,8 +428,13 @@ async function carregarCarteiraBase(): Promise<Carteira[]> {
     `[CARTEIRA] ${by.size.toLocaleString("pt-BR")} registros válidos carregados.`
   );
 
+  console.log("[DIAG360 CARTEIRA] Normalizacao:", Math.round(performance.now() - diagNormalizacao), "ms");
+  const diagExcluidos = performance.now();
   const excluidos = await listarClientesExcluidos();
-  return [...by.values()].filter(c => !excluidos.has(cleanCode(c.codigo)));
+  console.log("[DIAG360 CARTEIRA] Lista exclusoes:", Math.round(performance.now() - diagExcluidos), "ms");
+  const resultado = [...by.values()].filter(c => !excluidos.has(cleanCode(c.codigo)));
+  console.log("[DIAG360 CARTEIRA] Total:", Math.round(performance.now() - diagInicio), "ms", "clientes:", resultado.length);
+  return resultado;
 }
 
 async function carregarFinanceiro() {

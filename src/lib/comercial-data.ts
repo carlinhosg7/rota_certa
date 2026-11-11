@@ -476,8 +476,28 @@ async function carregarFinanceiro() {
     throw new Error(`${nome} não possui uma planilha válida.`);
   }
 
-  const rows = XLSX.utils.sheet_to_json<Record<string, any>>(ws, {
+  const linhasFinanceiro = XLSX.utils.sheet_to_json<any[]>(ws, {
+    header: 1,
     defval: null,
+    raw: true,
+  });
+
+  const cabecalhoFinanceiro = findHeader(linhasFinanceiro, [
+    "Codigo Cliente",
+    "Limite Disponivel",
+    "Bloqueado Financeiro",
+  ]);
+
+  if (cabecalhoFinanceiro < 0) {
+    throw new Error(
+      "Cabecalho financeiro nao encontrado em DADOS PRDITIVA LIMITE.xlsx"
+    );
+  }
+
+  const rows = XLSX.utils.sheet_to_json<Record<string, any>>(ws, {
+    range: cabecalhoFinanceiro,
+    defval: null,
+    raw: true,
   });
 
   for (const r of rows) {

@@ -17,16 +17,26 @@ function codigo(v: unknown): string {
   return String(v ?? "").trim().replace(/\.0+$/, "");
 }
 
-export async function carregarFinanceiroEspelho360():
+async function consultarJWT360<T extends { error: { message: string } | null }>(
+  executar: () => PromiseLike<T>, contexto: string
+): Promise<T> {
+  for (let tentativa = 0; ; tentativa++) {
+    const resposta = await executar();
+    if (!/JWT issued at future/i.test(resposta.error?.message ?? "") || tentativa >= 2) return resposta;
+    console.warn("[ESPELHO360 JWT] Falha transitoria:", contexto, "tentativa", tentativa + 2, "de 3");
+    await new Promise<void>(resolve => setTimeout(resolve, tentativa === 0 ? 350 : 900));
+  }
+}
+async function carregarFinanceiroSemCache():
   Promise<Map<string, { limite: number; bloqueio: string }>> {
   const inicio = performance.now();
-  const { data: lote, error: erroLote } = await supabase
+  const { data: lote, error: erroLote } = await consultarJWT360(() => supabase
     .from("kidy_360_financeiro_espelho_lotes")
     .select("lote_id,criado_em,status,total_clientes,arquivo_sha256")
     .eq("status", "VALIDADO")
     .order("criado_em", { ascending: false })
     .limit(1)
-    .maybeSingle();
+    .maybeSingle(), "lote");
 
   if (erroLote || !lote) {
     throw new Error("Espelho financeiro sem lote VALIDADO: " +
@@ -48,10 +58,10 @@ export async function carregarFinanceiroEspelho360():
     throw new Error("Espelho financeiro sem lote recente (48 horas)");
   }
 
-  const { count, error: erroContagem } = await supabase
+  const { count, error: erroContagem } = await consultarJWT360(() => supabase
     .from("kidy_360_financeiro_espelho_clientes")
     .select("codigo_cliente", { count: "exact", head: true })
-    .eq("lote_id", lote.lote_id);
+    .eq("lote_id", lote.lote_id), "contagem");
 
   if (erroContagem || count !== total) {
     throw new Error("Espelho financeiro: contagem divergente " +
@@ -65,12 +75,12 @@ export async function carregarFinanceiroEspelho360():
       { length: Math.min(PARALELISMO, paginas - i) }, (_, j) => i + j
     );
     const respostas = await Promise.all(indices.map(async indice => {
-      const { data, error } = await supabase
+      const { data, error } = await consultarJWT360(() => supabase
         .from("kidy_360_financeiro_espelho_clientes")
         .select("codigo_cliente,limite_disponivel,bloqueio")
         .eq("lote_id", lote.lote_id)
         .order("codigo_cliente", { ascending: true })
-        .range(indice * PAGINA, Math.min((indice + 1) * PAGINA, total) - 1);
+        .range(indice * PAGINA, Math.min((indice + 1) * PAGINA, total) - 1), `pagina ${indice}`);
 
       if (error) throw new Error(
         `Espelho financeiro pagina ${indice}: ${error.message}`
@@ -113,4 +123,23 @@ export async function carregarFinanceiroEspelho360():
     "tempoMs:", Math.round(performance.now() - inicio)
   );
   return resultado;
+}
+
+const CACHE_FINANCEIRO_MS = 60_000;
+let cacheFinanceiro: { dados: Map<string, { limite: number; bloqueio: string }>; ate: number } | null = null;
+let carregamentoFinanceiro: Promise<Map<string, { limite: number; bloqueio: string }>> | null = null;
+
+export async function carregarFinanceiroEspelho360(): Promise<Map<string, { limite: number; bloqueio: string }>> {
+  if (cacheFinanceiro && Date.now() < cacheFinanceiro.ate) {
+    console.log("[FINANCEIRO ESPELHO360] CACHE 60s clientes:", cacheFinanceiro.dados.size);
+    return cacheFinanceiro.dados;
+  }
+  if (carregamentoFinanceiro) return carregamentoFinanceiro;
+  const execucao = carregarFinanceiroSemCache().then(dados => {
+    cacheFinanceiro = { dados, ate: Date.now() + CACHE_FINANCEIRO_MS };
+    return dados;
+  });
+  carregamentoFinanceiro = execucao;
+  try { return await execucao; }
+  finally { if (carregamentoFinanceiro === execucao) carregamentoFinanceiro = null; }
 }

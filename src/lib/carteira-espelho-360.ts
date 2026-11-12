@@ -36,15 +36,25 @@ function codigo(v: unknown): string {
   return String(v ?? "").trim().replace(/\.0+$/, "");
 }
 
+async function consultarJWT360<T extends { error: { message: string } | null }>(
+  executar: () => PromiseLike<T>, contexto: string
+): Promise<T> {
+  for (let tentativa = 0; ; tentativa++) {
+    const resposta = await executar();
+    if (!/JWT issued at future/i.test(resposta.error?.message ?? "") || tentativa >= 2) return resposta;
+    console.warn("[ESPELHO360 JWT] Falha transitoria:", contexto, "tentativa", tentativa + 2, "de 3");
+    await new Promise<void>(resolve => setTimeout(resolve, tentativa === 0 ? 350 : 900));
+  }
+}
 export async function carregarCarteiraEspelho360(): Promise<CarteiraEspelho360[]> {
   const inicio = performance.now();
-  const { data: lote, error: erroLote } = await supabase
+  const { data: lote, error: erroLote } = await consultarJWT360(() => supabase
     .from("kidy_360_carteira_espelho_lotes")
     .select("lote_id,criado_em,status,total_registros,arquivo_sha256")
     .eq("status", "VALIDADO")
     .order("criado_em", { ascending: false })
     .limit(1)
-    .maybeSingle();
+    .maybeSingle(), "lote");
 
   if (erroLote || !lote) {
     throw new Error("Nao ha lote validado do espelho: " + (erroLote?.message ?? "nenhum"));
@@ -62,10 +72,10 @@ export async function carregarCarteiraEspelho360(): Promise<CarteiraEspelho360[]
     throw new Error("Espelho desatualizado ou sem data confiavel; usar Drive. Lote: " + lote.lote_id);
   }
 
-  const { count, error: erroContagem } = await supabase
+  const { count, error: erroContagem } = await consultarJWT360(() => supabase
     .from("kidy_360_carteira_espelho_clientes")
     .select("codigo_cliente", { count: "exact", head: true })
-    .eq("lote_id", lote.lote_id);
+    .eq("lote_id", lote.lote_id), "contagem");
   if (erroContagem || count !== total) {
     throw new Error("Contagem divergente: " + (erroContagem?.message ?? `${count} != ${total}`));
   }
@@ -75,13 +85,13 @@ export async function carregarCarteiraEspelho360(): Promise<CarteiraEspelho360[]
   for (let base = 0; base < paginas; base += PARALELISMO) {
     const indices = Array.from({ length: Math.min(PARALELISMO, paginas - base) }, (_, i) => base + i);
     const respostas = await Promise.all(indices.map(async indice => {
-      const { data, error } = await supabase
+      const { data, error } = await consultarJWT360(() => supabase
         .from("kidy_360_carteira_espelho_clientes")
         .select("codigo_cliente,codigo_representante,razao,codigo_supervisor,cidade,uf,city_key")
         .eq("lote_id", lote.lote_id)
         .order("codigo_cliente", { ascending: true })
         .order("codigo_representante", { ascending: true })
-        .range(indice * PAGINA, Math.min((indice + 1) * PAGINA, total) - 1);
+        .range(indice * PAGINA, Math.min((indice + 1) * PAGINA, total) - 1), `pagina ${indice}`);
       if (error) throw new Error(`Erro pagina espelho ${indice}: ${error.message}`);
       const esperado = Math.min(PAGINA, total - indice * PAGINA);
       if (!data || data.length !== esperado) throw new Error(`Pagina incompleta: ${indice} (${data?.length ?? 0}/${esperado})`);

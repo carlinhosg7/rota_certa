@@ -274,6 +274,33 @@ async function baixarDriveComCache(
   }
 }
 
+async function baixarFinanceiroIsoladoComPrazo(nome: string): Promise<Buffer> {
+  const controller = new AbortController();
+  const prazoMs = 15000;
+  const timer = setTimeout(() => controller.abort(), prazoMs);
+  try {
+    const lista = await drive.listarArquivos({ signal: controller.signal }) as ArquivoDrive[];
+    const arquivo = lista.find(item => item.nome === nome);
+    if (!arquivo) throw new Error(`Financeiro nao encontrado no Drive: ${nome}`);
+
+    const cache = lerCacheValido(nome, arquivo);
+    if (cache) {
+      console.log(`[FINANCEIRO ISOLADO] Cache Drive: ${cache.length} bytes`);
+      return cache;
+    }
+
+    console.log(`[FINANCEIRO ISOLADO] Download Drive iniciado (${prazoMs} ms de limite total)`);
+    const buffer = validarArquivo(nome, await drive.baixarArquivo(arquivo, { signal: controller.signal }) as Buffer);
+    if (buffer.length !== Number(arquivo.tamanho)) {
+      throw new Error(`Tamanho financeiro incorreto: ${nome}`);
+    }
+    salvarCache(nome, arquivo, buffer);
+    return buffer;
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
 export async function lerArquivoComercial(
   nome: string
 ): Promise<Buffer> {
@@ -293,7 +320,7 @@ export async function lerArquivoComercial(
     process.env.KIDY_FINANCEIRO_DRIVE_ISOLADO === "1"
   ) {
     try {
-      const buffer = await baixarDriveComCache(nome);
+      const buffer = await baixarFinanceiroIsoladoComPrazo(nome);
       console.log(`[FINANCEIRO ISOLADO] Drive oficial: ${buffer.length} bytes`);
       return buffer;
     } catch (erro) {

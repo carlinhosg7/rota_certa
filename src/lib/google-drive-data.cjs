@@ -48,10 +48,16 @@ function configuracao() {
   return { url, token };
 }
 
-async function chamarAPI(acao, parametros = {}) {
+async function chamarAPI(acao, parametros = {}, options = {}) {
   const { url, token } = configuracao();
 
   const controller = new AbortController();
+  const externalSignal = options.signal;
+  const cancelarExternamente = () => controller.abort();
+  if (externalSignal) {
+    if (externalSignal.aborted) controller.abort();
+    else externalSignal.addEventListener("abort", cancelarExternamente, { once: true });
+  }
   const timeout = setTimeout(() => controller.abort(), 120000);
 
   try {
@@ -83,11 +89,12 @@ async function chamarAPI(acao, parametros = {}) {
     return dados;
   } finally {
     clearTimeout(timeout);
+    if (externalSignal) externalSignal.removeEventListener("abort", cancelarExternamente);
   }
 }
 
-async function listarArquivos() {
-  const resultado = await chamarAPI("listar");
+async function listarArquivos(options = {}) {
+  const resultado = await chamarAPI("listar", {}, options);
 
   if (!Array.isArray(resultado.arquivos)) {
     throw new Error("Lista de arquivos inválida.");
@@ -100,7 +107,7 @@ async function listarArquivos() {
   );
 }
 
-async function baixarArquivo(arquivo) {
+async function baixarArquivo(arquivo, options = {}) {
   const totalEsperado = Number(arquivo.tamanho);
 
   if (
@@ -123,7 +130,7 @@ async function baixarArquivo(arquivo) {
     const resposta = await chamarAPI("arquivo", {
       id: arquivo.id,
       parte
-    });
+    }, options);
 
     const quantidade = Number(resposta.totalPartes);
 

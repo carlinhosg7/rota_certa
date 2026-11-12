@@ -44,7 +44,7 @@ export function supervisorOficial(regional: string): string | null {
 }
 
 export async function carregarMapaRepresentantes(): Promise<MapaRepresentantes> {
-  const [cadastroResp, deParaResp] = await Promise.all([
+  const consultar = () => Promise.all([
     supabase
       .from("representantes_cadastro")
       .select("codigo_rep,nome_rep,regional,codigo_supervisor,ativo")
@@ -55,6 +55,16 @@ export async function carregarMapaRepresentantes(): Promise<MapaRepresentantes> 
       .select("codigo_antigo,codigo_atual")
       .order("codigo_antigo"),
   ]);
+
+  let [cadastroResp, deParaResp] = await consultar();
+  const erroJwt = (mensagem?: string) =>
+    /jwt issued at future/i.test(mensagem || "");
+
+  if (erroJwt(cadastroResp.error?.message) || erroJwt(deParaResp.error?.message)) {
+    console.warn("[REPRESENTANTES] JWT futuro; repetindo consultas uma unica vez.");
+    await new Promise<void>(resolve => setTimeout(resolve, 400));
+    [cadastroResp, deParaResp] = await consultar();
+  }
 
   if (cadastroResp.error) {
     throw new Error(`Cadastro representantes: ${cadastroResp.error.message}`);

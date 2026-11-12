@@ -285,6 +285,22 @@ export async function lerArquivoComercial(
     return baixarDriveComCache(nome);
   }
 
+  // Modo opcional: apenas a planilha financeira usa o Google Drive.
+  // Em caso de erro no Drive, a origem padrao GitHub continua disponivel.
+  if (
+    fonte === "github" &&
+    nome === "DADOS PRDITIVA LIMITE.xlsx" &&
+    process.env.KIDY_FINANCEIRO_DRIVE_ISOLADO === "1"
+  ) {
+    try {
+      const buffer = await baixarDriveComCache(nome);
+      console.log(`[FINANCEIRO ISOLADO] Drive oficial: ${buffer.length} bytes`);
+      return buffer;
+    } catch (erro) {
+      console.error("[FINANCEIRO ISOLADO] Erro no Drive. Voltando ao GitHub:", erro);
+    }
+  }
+
   const url = `${GITHUB_RAW}/${nome
     .split("/")
     .map(encodeURIComponent)

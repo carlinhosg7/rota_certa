@@ -1,4 +1,5 @@
 import { carregarCarteiraEspelho360 } from "./carteira-espelho-360";
+import { carregarFinanceiroEspelho360 } from "./financeiro-espelho-360";
 import { listarClientesExcluidos } from "./clientes-excluidos";
 import fs from "fs";
 import {
@@ -1396,7 +1397,15 @@ export async function carregarBasesLeves360() {
         return carregarCarteiraBase();
       }
     }),
-    medir("Financeiro", carregarFinanceiro),
+    medir("Financeiro", async () => {
+      if (process.env.KIDY_FINANCEIRO_ESPELHO !== "1") return carregarFinanceiro();
+      try {
+        return await carregarFinanceiroEspelho360();
+      } catch (erro) {
+        console.error("[FINANCEIRO ESPELHO360] Falha, retornando a origem anterior:", erro);
+        return carregarFinanceiro();
+      }
+    }),
     medir("Produtos", carregarProdutosAutorizados),
     medir("Referencias", carregarNomesReferencias),
     medir("Representantes", carregarMapaRepresentantes)

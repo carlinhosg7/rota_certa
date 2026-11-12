@@ -1398,6 +1398,13 @@ export async function carregarBasesLeves360() {
       }
     }),
     medir("Financeiro", async () => {
+      console.log("[FINANCEIRO ORIGEM DIAGNOSTICO]", {
+        espelhoHabilitado: process.env.KIDY_FINANCEIRO_ESPELHO === "1",
+        variavelPresente: process.env.KIDY_FINANCEIRO_ESPELHO !== undefined,
+        ambiente: process.env.VERCEL_ENV ?? "local",
+        branch: process.env.VERCEL_GIT_COMMIT_REF ?? "local",
+        commit: (process.env.VERCEL_GIT_COMMIT_SHA ?? "local").slice(0, 7)
+      });
       if (process.env.KIDY_FINANCEIRO_ESPELHO !== "1") return carregarFinanceiro();
       try {
         return await carregarFinanceiroEspelho360();

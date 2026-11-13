@@ -46,7 +46,7 @@ async function consultarJWT360<T extends { error: { message: string } | null }>(
     await new Promise<void>(resolve => setTimeout(resolve, tentativa === 0 ? 350 : 900));
   }
 }
-export async function carregarCarteiraEspelho360(): Promise<CarteiraEspelho360[]> {
+async function carregarCarteiraEspelho360SemCache(): Promise<CarteiraEspelho360[]> {
   const inicio = performance.now();
   const { data: lote, error: erroLote } = await consultarJWT360(() => supabase
     .from("kidy_360_carteira_espelho_lotes")
@@ -130,4 +130,25 @@ export async function carregarCarteiraEspelho360(): Promise<CarteiraEspelho360[]
     "idadeHoras:", Math.round(idadeMs / 3600000 * 10) / 10,
     "tempoMs:", Math.round(performance.now() - inicio));
   return carteira;
+}
+
+// CACHE_CARTEIRA_360_V1: somente dados comerciais, nunca resposta por usuario.
+// Instancias serverless diferentes possuem caches independentes.
+const CACHE_CARTEIRA_360_MS = 30_000;
+let cacheCarteira360: { dados: CarteiraEspelho360[]; ate: number } | null = null;
+let leituraCarteira360: Promise<CarteiraEspelho360[]> | null = null;
+
+export async function carregarCarteiraEspelho360(): Promise<CarteiraEspelho360[]> {
+  if (cacheCarteira360 && Date.now() < cacheCarteira360.ate) {
+    console.log("[ESPELHO360 V2] CACHE 30s clientes:", cacheCarteira360.dados.length);
+    return cacheCarteira360.dados;
+  }
+  if (leituraCarteira360) return leituraCarteira360;
+  const execucao = carregarCarteiraEspelho360SemCache().then(dados => {
+    cacheCarteira360 = { dados, ate: Date.now() + CACHE_CARTEIRA_360_MS };
+    return dados;
+  });
+  leituraCarteira360 = execucao;
+  try { return await execucao; }
+  finally { if (leituraCarteira360 === execucao) leituraCarteira360 = null; }
 }

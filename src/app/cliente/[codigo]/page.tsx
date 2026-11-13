@@ -416,10 +416,18 @@ const janelaComercial = await calcularJanelaCompraFaturamento(
     carteira.map((c) => [cleanCode(c.codigo), c])
   );
 
-  const inicioPerfisDiag360 = performance.now();
-  const perfisHistoricos = await buscarPerfis360();
-  console.log("[SIM360 FASE] perfisHistoricos", perfisHistoricos.length,
-    "tempoMs", Math.round(performance.now() - inicioPerfisDiag360));
+  const inicioFontesSim360 = performance.now();
+
+  const [perfisHistoricos, carteiraComparacao2027] =
+    await Promise.all([
+      buscarPerfis360(),
+      carregarCarteira2027(),
+    ]);
+
+  console.log("[SIM360 FASE] fontesParalelas",
+    "perfis", perfisHistoricos.length,
+    "carteira2027", carteiraComparacao2027.clientes.length,
+    "tempoMs", Math.round(performance.now() - inicioFontesSim360));
 
   function proximidadeLog(a: number, b: number) {
     if (a <= 0 && b <= 0) return 1;
@@ -431,10 +439,7 @@ const janelaComercial = await calcularJanelaCompraFaturamento(
   // Prioridade da sugestão: carteira ATIVA do representante;
   // quando não houver amostra suficiente, carteira ATIVA da regional.
   // Nunca completar a amostra com clientes de outras regionais.
-  const inicioCarteira2027Diag360 = performance.now();
-  const carteiraComparacao2027 = await carregarCarteira2027();
-  console.log("[SIM360 FASE] carteira2027", carteiraComparacao2027.clientes.length,
-    "tempoMs", Math.round(performance.now() - inicioCarteira2027Diag360));
+
   const representantesCliente = new Set(
     (carteiraComparacao2027.clientes.find(c => cleanCode(c.codigoCliente) === codigoLimpo)
       ?.representanteAtual ?? []).map(r => cleanCode(r.codigo))

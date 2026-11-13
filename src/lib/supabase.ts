@@ -16,7 +16,10 @@ export const supabase = createClient(url, key, {
       const inicio = Date.now();
 
       try {
-        const resposta = await fetch(input, init);
+        const resposta = await fetch(input, {
+          ...init,
+          cache: "no-store",
+        });
 
         if (resposta.status === 401 || resposta.status === 403) {
           const dataServidor = resposta.headers.get("date");

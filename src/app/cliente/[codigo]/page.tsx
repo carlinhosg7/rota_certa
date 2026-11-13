@@ -416,7 +416,10 @@ const janelaComercial = await calcularJanelaCompraFaturamento(
     carteira.map((c) => [cleanCode(c.codigo), c])
   );
 
+  const inicioPerfisDiag360 = performance.now();
   const perfisHistoricos = await buscarPerfis360();
+  console.log("[SIM360 FASE] perfisHistoricos", perfisHistoricos.length,
+    "tempoMs", Math.round(performance.now() - inicioPerfisDiag360));
 
   function proximidadeLog(a: number, b: number) {
     if (a <= 0 && b <= 0) return 1;
@@ -428,7 +431,10 @@ const janelaComercial = await calcularJanelaCompraFaturamento(
   // Prioridade da sugestão: carteira ATIVA do representante;
   // quando não houver amostra suficiente, carteira ATIVA da regional.
   // Nunca completar a amostra com clientes de outras regionais.
+  const inicioCarteira2027Diag360 = performance.now();
   const carteiraComparacao2027 = await carregarCarteira2027();
+  console.log("[SIM360 FASE] carteira2027", carteiraComparacao2027.clientes.length,
+    "tempoMs", Math.round(performance.now() - inicioCarteira2027Diag360));
   const representantesCliente = new Set(
     (carteiraComparacao2027.clientes.find(c => cleanCode(c.codigoCliente) === codigoLimpo)
       ?.representanteAtual ?? []).map(r => cleanCode(r.codigo))
@@ -513,9 +519,12 @@ const janelaComercial = await calcularJanelaCompraFaturamento(
     .slice(0, 40);
 
   // Consulta agrupada dos clientes semelhantes.
+  const inicioVendas40Diag360 = performance.now();
   const mapaVendasSemelhantes = await buscarVendasClientes360(
     candidatosComparacao.map((c) => c.codigo)
   );
+  console.log("[SIM360 FASE] vendas40", candidatosComparacao.length,
+    "tempoMs", Math.round(performance.now() - inicioVendas40Diag360));
 
   for (const candidato of candidatosComparacao) {
     const vendas =
@@ -890,7 +899,10 @@ const janelaComercial = await calcularJanelaCompraFaturamento(
     )
   )].filter(c => !mapaVendasSemelhantes.has(c));
 
+  const inicioExtrasDiag360 = performance.now();
   const extrasV4 = await buscarVendasClientes360(codigosExtrasV4);
+  console.log("[SIM360 FASE] vendasExtrasV4", codigosExtrasV4.length,
+    "tempoMs", Math.round(performance.now() - inicioExtrasDiag360));
 
   const vendasPorClienteV4 = new Map([
     ...mapaVendasSemelhantes,

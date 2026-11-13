@@ -7,7 +7,7 @@ import type { Venda } from "./comercial-data";
 const SNAPSHOT_ID = "8e280ff4-cc58-46fa-b60a-48cd82d5c85b";
 
 const TAMANHO_PAGINA = 1000;
-const TAMANHO_GRUPO = 8;
+const TAMANHO_GRUPO = 16;
 
 function converterData(valor: unknown): Date | null {
   if (!valor) return null;

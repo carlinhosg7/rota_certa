@@ -39,6 +39,16 @@ export const supabase = createClient(url, key, {
             diferencaSegundos,
             duracaoMs: Date.now() - inicio,
             ambiente: process.env.VERCEL_ENV || "local",
+            diagnosticoCache: {
+              age: resposta.headers.get("age"),
+              cacheControl: resposta.headers.get("cache-control"),
+              vercelCache: resposta.headers.get("x-vercel-cache"),
+              nextjsCache: resposta.headers.get("x-nextjs-cache"),
+              cfCacheStatus: resposta.headers.get("cf-cache-status"),
+              via: resposta.headers.get("via"),
+              server: resposta.headers.get("server"),
+              requestId: resposta.headers.get("sb-request-id"),
+            },
           });
         }
 

@@ -50,7 +50,7 @@ export async function carregarCarteiraEspelho360(): Promise<CarteiraEspelho360[]
   const inicio = performance.now();
   const { data: lote, error: erroLote } = await consultarJWT360(() => supabase
     .from("kidy_360_carteira_espelho_lotes")
-    .select("lote_id,criado_em,status,total_registros,arquivo_sha256")
+    .select("lote_id,criado_em,status,total_registros,arquivo_sha256,observacao")
     .eq("status", "VALIDADO")
     .order("criado_em", { ascending: false })
     .limit(1)
@@ -67,8 +67,13 @@ export async function carregarCarteiraEspelho360(): Promise<CarteiraEspelho360[]
     throw new Error("Lote sem SHA256 de origem valido");
   }
   const criadoEm = Date.parse(String(lote.criado_em ?? ""));
-  const idadeMs = Date.now() - criadoEm;
-  if (!Number.isFinite(criadoEm) || idadeMs < -5 * 60_000 || idadeMs > MAX_IDADE_HORAS * 3600_000) {
+  // Verificacao diaria integral pode renovar a confiabilidade sem criar lote novo.
+  // Para lotes antigos, usa-se o instante original da importacao.
+  const marca = String(lote.observacao ?? "").match(/(?:^|\s)VERIFICADO_EM=(\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z)(?:\s|$)/);
+  const verificadoEm = marca ? Date.parse(marca[1]) : criadoEm;
+  const idadeMs = Date.now() - verificadoEm;
+  if (!Number.isFinite(criadoEm) || !Number.isFinite(verificadoEm) ||
+      verificadoEm < criadoEm - 5 * 60_000 || idadeMs < -5 * 60_000 || idadeMs > MAX_IDADE_HORAS * 3600_000) {
     throw new Error("Espelho desatualizado ou sem data confiavel; usar Drive. Lote: " + lote.lote_id);
   }
 

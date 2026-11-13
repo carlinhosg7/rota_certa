@@ -43,7 +43,7 @@ async function consultarJWT360<T extends { error: { message: string } | null }>(
     const resposta = await executar();
     if (!/JWT issued at future/i.test(resposta.error?.message ?? "") || tentativa >= 2) return resposta;
     console.warn("[ESPELHO360 JWT] Falha transitoria:", contexto, "tentativa", tentativa + 2, "de 3");
-    await new Promise<void>(resolve => setTimeout(resolve, tentativa === 0 ? 350 : 900));
+    await new Promise<void>(resolve => setTimeout(resolve, tentativa === 0 ? 2500 : 4000));
   }
 }
 async function carregarCarteiraEspelho360SemCache(): Promise<CarteiraEspelho360[]> {

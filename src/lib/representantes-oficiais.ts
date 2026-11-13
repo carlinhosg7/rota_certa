@@ -60,9 +60,22 @@ export async function carregarMapaRepresentantes(): Promise<MapaRepresentantes> 
   const erroJwt = (mensagem?: string) =>
     /jwt issued at future/i.test(mensagem || "");
 
-  if (erroJwt(cadastroResp.error?.message) || erroJwt(deParaResp.error?.message)) {
-    console.warn("[REPRESENTANTES] JWT futuro; repetindo consultas uma unica vez.");
-    await new Promise<void>(resolve => setTimeout(resolve, 400));
+  for (let tentativa = 0; tentativa < 2; tentativa++) {
+    if (!erroJwt(cadastroResp.error?.message) &&
+        !erroJwt(deParaResp.error?.message)) {
+      break;
+    }
+
+    const esperaMs = tentativa === 0 ? 2500 : 4000;
+
+    console.warn(
+      "[REPRESENTANTES JWT] Retentativa",
+      tentativa + 2,
+      "de 3; esperaMs:",
+      esperaMs
+    );
+
+    await new Promise<void>(resolve => setTimeout(resolve, esperaMs));
     [cadastroResp, deParaResp] = await consultar();
   }
 

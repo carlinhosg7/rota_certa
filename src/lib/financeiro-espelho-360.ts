@@ -5,7 +5,7 @@ import { supabase } from "./supabase";
 // Sem lote recente/consistente, o chamador deve usar sua leitura anterior.
 const MAX_IDADE_HORAS = 48;
 const PAGINA = 1000;
-const PARALELISMO = 3;
+const PARALELISMO = 5;
 
 type LinhaFinanceira = {
   codigo_cliente: string;

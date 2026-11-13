@@ -8,7 +8,7 @@ import { listarClientesExcluidos } from "./clientes-excluidos";
 // O prazo impede uso indefinido de um espelho desatualizado.
 const MAX_IDADE_HORAS = 24;
 const PAGINA = 1000;
-const PARALELISMO = 3;
+const PARALELISMO = 5;
 
 type LinhaEspelho = {
   codigo_cliente: string;

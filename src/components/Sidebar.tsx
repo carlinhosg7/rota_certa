@@ -135,7 +135,7 @@ export default function Sidebar({ nome, perfil, usuario }: Props) {
             >
               {item.titulo}
             </Link>
-              {item.titulo === "Campanhas Clientes" && (
+              {item.titulo === "Campanhas de Clientes" && (
                 <>
                   <div style={{
                     marginTop: 4,

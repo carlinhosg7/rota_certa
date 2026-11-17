@@ -3,6 +3,8 @@ import { NextRequest, NextResponse } from 'next/server';
 import { cookies } from 'next/headers';
 import { validarToken } from '@/lib/auth';
 import { representantesPermitidos } from '@/lib/escopo-acesso';
+
+import { listarClientesExcluidos } from '@/lib/clientes-excluidos';
 import { carregarMapaRepresentantes, normalizarRepresentante } from '@/lib/representantes-oficiais';
 
 export const runtime = 'nodejs';
@@ -63,6 +65,9 @@ export async function POST(req: NextRequest) {
     const participantes = Number(body.participantes);
     if (!/^\d{1,15}$/.test(clienteCodigo) || !/^\d{1,10}$/.test(repCodigo)) return falha('Informe cliente e representante validos',400);
     if (permitidos && !permitidos.has(repCodigo)) return falha('Representante nao autorizado',403);
+    // Impede novos treinamentos para clientes excluidos da carteira comercial.
+    const clientesExcluidos = await listarClientesExcluidos();
+    if (clientesExcluidos.has(clienteCodigo)) return falha('Cliente excluido da carteira comercial',404);
     if (!dataValida(data) || data < '2026-11-09' || data > '2027-03-31') return falha('Data fora da campanha',400);
     // Impedir registro de treinamento futuro. O rascunho pode ser criado depois da realizacao.
     const hojeBrasil = new Intl.DateTimeFormat('en-CA', {timeZone:'America/Sao_Paulo',year:'numeric',month:'2-digit',day:'2-digit'}).format(new Date());

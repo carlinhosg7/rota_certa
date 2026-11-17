@@ -863,7 +863,8 @@ export default async function VisaoGrupos({ searchParams }: Props) {
             ← Voltar à Gestão de Carteira
           </Link>
 
-          <p style={{
+          {!["REPRESENTANTE", "REP"].includes(perfil) && (
+<p style={{
             background: "#fff3df",
             border: "1px solid #f0c88f",
             padding: 13,
@@ -876,6 +877,7 @@ export default async function VisaoGrupos({ searchParams }: Props) {
             Código Cliente. Indicadores de vendas refletem o
             histórico comercial disponível na Visão 360º.
           </p>
+)}
 
           {erro ? (
             <section style={painel}>{erro}</section>
@@ -883,13 +885,16 @@ export default async function VisaoGrupos({ searchParams }: Props) {
             <>
               <>
   <section style={painel}>
-    <div style={{ fontSize: 12, color: "#92400e", marginBottom: 16 }}>
+    {!["REPRESENTANTE", "REP"].includes(perfil) && (
+<div style={{ fontSize: 12, color: "#92400e", marginBottom: 16 }}>
       Classificação provisória até confirmação de compra faturada.
       Referência: {dataReferencia.split("-").reverse().join("/")}.
       Corte de 24 meses: {corteUTC.toISOString().slice(0, 10).split("-").reverse().join("/")}.
     </div>
+)}
 
-    <form method="GET" action="/carteira/grupos"
+    {!["REPRESENTANTE", "REP"].includes(perfil) && (
+<form method="GET" action="/carteira/grupos"
       style={{ display: "flex", gap: 12, flexWrap: "wrap", alignItems: "end" }}>
 
       <label style={{ flex: "1 1 160px", fontSize: 12 }}>
@@ -944,6 +949,7 @@ export default async function VisaoGrupos({ searchParams }: Props) {
         Limpar
       </Link>
     </form>
+)}
   </section>
 
    {podeVerReceita && (<section style={painel}>

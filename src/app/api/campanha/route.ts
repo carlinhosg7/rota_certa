@@ -12,7 +12,7 @@ export const dynamic = "force-dynamic";
 
 const CAMPANHA = "CONQUISTE_AMOSTRA_2027";
 const cod = (v: unknown) => String(v ?? "").trim().replace(/\.0+$/, "");
-const competenciaValida = (v: string) => /^2026-11-01$|^2026-12-01$|^2027-0[1-3]-01$/.test(v);
+const competenciaValida = (v: string) => /^2026-11-01$|^2026-12-01$|^2027-0[1-4]-01$/.test(v);
 
 type Linha = {
   campanha: string;
@@ -64,7 +64,13 @@ export async function GET(request: NextRequest) {
         r.ativo &&
         Boolean(cod(r.codigo_supervisor)) &&
         (permitidos === null || permitidos.includes(cod(r.codigo_rep))) &&
-        (regionais === null || regionais.has(cod(r.codigo_supervisor)))
+        (
+          ["REPRESENTANTE", "REP"].includes(
+            String(usuario.perfil ?? "").trim().toUpperCase()
+          ) ||
+          regionais === null ||
+          regionais.has(cod(r.codigo_supervisor))
+        )
       );
 
     const oficiais = new Map(
@@ -133,28 +139,144 @@ export async function GET(request: NextRequest) {
       }];
     });
 
+    // Visao nacional: inclui movimentos sem meta.
+    // Visao restrita: preserva escopo de acesso existente.
+    const visaoNacional =
+      permitidos === null &&
+      regionais === null &&
+      !supervisor &&
+      !representante;
+
+    const visiveisComerciais = visaoNacional
+      ? linhas
+      : visiveis;
+
+    console.log("[CAMPANHA DIAGNOSTICO]", {
+      competencia,
+      linhasSupabase: linhas.length,
+      cadastroTotal: mapaOficial.cadastro.size,
+      cadastroVisivel: cadastroVisivel.length,
+      representantesOficiais: oficiais.size,
+      representantesPermitidos: permitidos === null ? "SEM_RESTRICAO" : permitidos.length,
+      regionaisPermitidas: regionais === null ? "SEM_RESTRICAO" : [...regionais],
+      supervisorFiltro: supervisor,
+      representanteFiltro: representante,
+      linhasVisiveis: visiveis.length,
+      linhasComerciais: visiveisComerciais.length,
+      visaoNacional
+    });
     const indicadores = [
-      { chave: "PRODUCAO", origem: "ENTRADA", modalidade: "PRODUCAO", titulo: "Entrada Producao", pontos: 60 },
-      { chave: "FATURAMENTO", origem: "FATURAMENTO", modalidade: "TOTAL", titulo: "Faturamento", pontos: 60 },
-      { chave: "KIDEX", origem: "ENTRADA", modalidade: "KIDEX", titulo: "Entrada Kidex", pontos: 20 },
+      {
+        chave: "PRODUCAO",
+        origem: "ENTRADA",
+        modalidade: "PRODUCAO",
+        titulo: "Entrada Producao",
+        pontos: 60
+      },
+      {
+        chave: "FATURAMENTO",
+        origem: "FATURAMENTO",
+        modalidade: "TOTAL",
+        titulo: "Faturamento",
+        pontos: 60
+      },
+      {
+        chave: "KIDEX",
+        origem: "ENTRADA",
+        modalidade: "KIDEX",
+        titulo: "Entrada Kidex",
+        pontos: 20
+      }
     ].map((indicador) => {
-      const itens = visiveis.filter((l) => l.origem === indicador.origem && l.modalidade === indicador.modalidade);
-      const completos = itens.length > 0 && itens.every((l) => l.status_dados !== "SEM_DADOS" && l.realizado_pares !== null && l.realizado_valor !== null);
-      const metaPares = itens.reduce((t, l) => t + Number(l.meta_pares || 0), 0);
-      const metaValor = itens.reduce((t, l) => t + Number(l.meta_valor || 0), 0);
-      const realizadoPares = completos ? itens.reduce((t, l) => t + Number(l.realizado_pares || 0), 0) : null;
-      const realizadoValor = completos ? itens.reduce((t, l) => t + Number(l.realizado_valor || 0), 0) : null;
+
+      const itens = visiveisComerciais.filter(
+        (l) =>
+          l.origem === indicador.origem &&
+          l.modalidade === indicador.modalidade
+      );
+
+      const itensComMeta = itens.filter(
+        (l) => l.status_dados !== "SEM_META"
+      );
+
+      const itensComRealizado = itens.filter(
+        (l) =>
+          l.realizado_pares !== null &&
+          l.realizado_valor !== null
+      );
+
+      const completos =
+        itensComMeta.length > 0 &&
+        itensComMeta.every(
+          (l) =>
+            l.status_dados !== "SEM_DADOS" &&
+            l.realizado_pares !== null &&
+            l.realizado_valor !== null
+        );
+
+      const metaPares = itensComMeta.reduce(
+        (total, l) =>
+          total + Number(l.meta_pares || 0),
+        0
+      );
+
+      const metaValor = itensComMeta.reduce(
+        (total, l) =>
+          total + Number(l.meta_valor || 0),
+        0
+      );
+
+      const realizadoPares =
+        itensComRealizado.length > 0
+          ? itensComRealizado.reduce(
+              (total, l) =>
+                total + Number(l.realizado_pares || 0),
+              0
+            )
+          : null;
+
+      const realizadoValor =
+        itensComRealizado.length > 0
+          ? itensComRealizado.reduce(
+              (total, l) =>
+                total + Number(l.realizado_valor || 0),
+              0
+            )
+          : null;
+
       return {
         ...indicador,
-        representantes: new Set(itens.map((i) => cod(i.codigo_representante))).size,
-        metaPares, metaValor, realizadoPares, realizadoValor,
-        percentualPares: realizadoPares === null || metaPares <= 0 ? null : 100 * realizadoPares / metaPares,
-        percentualValor: realizadoValor === null || metaValor <= 0 ? null : 100 * realizadoValor / metaValor,
-        status: completos ? "PARCIAL_NAO_HOMOLOGADO" : "AGUARDANDO_DADOS",
-        pontosConcedidos: 0,
+
+        representantes: new Set(
+          itensComMeta.map(
+            (l) => cod(l.codigo_representante)
+          )
+        ).size,
+
+        metaPares,
+        metaValor,
+        realizadoPares,
+        realizadoValor,
+
+        percentualPares:
+          realizadoPares === null || metaPares <= 0
+            ? null
+            : 100 * realizadoPares / metaPares,
+
+        percentualValor:
+          realizadoValor === null || metaValor <= 0
+            ? null
+            : 100 * realizadoValor / metaValor,
+
+        status: completos
+          ? "PARCIAL_NAO_HOMOLOGADO"
+          : itensComRealizado.length > 0
+            ? "INCOMPLETO_NAO_HOMOLOGADO"
+            : "AGUARDANDO_DADOS",
+
+        pontosConcedidos: 0
       };
     });
-
     // Pontos de treinamento: apenas registros oficiais homologados, sem testes.
     // A pontuacao global da campanha continua bloqueada ate as outras categorias estarem homologadas.
     const {base: hBase, headers: hHeaders} = credenciais();

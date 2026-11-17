@@ -49,3 +49,10 @@
 .tankGeneral .tankTicks {
   color: #C56D11;
 }
+
+/* CAMPANHA 2027 - GRID 3 COLUNAS */
+@media (min-width: 1151px) {
+  .tanksRow {
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+  }
+}

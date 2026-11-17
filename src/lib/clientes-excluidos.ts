@@ -1,19 +1,51 @@
 import "server-only";
 import { supabase } from "./supabase";
 
-// Exclusao logica. O cadastro e as vendas historicas permanecem no banco.
+function normalizarCodigo(valor: unknown): string {
+  return String(valor ?? "")
+    .trim()
+    .replace(/\.0+$/, "");
+}
+
+// Exclusao logica: preserva cadastro, snapshots e historico de vendas.
 export async function listarClientesExcluidos(): Promise<Set<string>> {
-  const resultado = new Set<string>();
-  for (let inicio = 0; ; inicio += 1000) {
-    const { data, error } = await supabase
-      .from("kidy_clientes_excluidos")
-      .select("codigo_cliente")
-      .eq("ativo", true)
-      .order("codigo_cliente")
-      .range(inicio, inicio + 999);
-    if (error) throw new Error("Falha consultando exclusoes de clientes: " + error.message);
-    for (const r of data ?? []) resultado.add(String(r.codigo_cliente).trim().replace(/\.0+$/, ""));
-    if ((data ?? []).length < 1000) break;
+  const excluidos = new Set<string>();
+
+  const tabelas = [
+    "kidy_clientes_excluidos",
+    "kidy_carteira_exclusoes",
+  ];
+
+  for (const tabela of tabelas) {
+    for (let inicio = 0; ; inicio += 1000) {
+      const { data, error } = await supabase
+        .from(tabela)
+        .select("codigo_cliente")
+        .eq("ativo", true)
+        .order("codigo_cliente")
+        .range(inicio, inicio + 999);
+
+      if (error) {
+        throw new Error(
+          `Falha consultando ${tabela}: ${error.message}`
+        );
+      }
+
+      for (const registro of data ?? []) {
+        const codigo = normalizarCodigo(
+          registro.codigo_cliente
+        );
+
+        if (codigo) {
+          excluidos.add(codigo);
+        }
+      }
+
+      if ((data ?? []).length < 1000) {
+        break;
+      }
+    }
   }
-  return resultado;
+
+  return excluidos;
 }

@@ -62,6 +62,21 @@ export default function Sidebar({ nome, perfil, usuario }: Props) {
     { titulo: "Gestão de Carteira 2027", href: "/carteira", rota: "/carteira" },
     { titulo: "Carteira 02 por Representante", href: "/carteira/por-representante", rota: "/carteira/por-representante" }
   ];
+  const ehRepresentante =
+    ["REPRESENTANTE", "REP"].includes(perfil.trim().toUpperCase());
+
+  const menusRepresentante = new Set([
+    "Metas",
+    "Campanhas Representantes",
+    "Campanhas de Clientes",
+    "Análise Preditiva",
+    "Gestão de Carteira 2027",
+  ]);
+
+  const itensVisiveis = ehRepresentante
+    ? itens.filter(item => menusRepresentante.has(item.titulo))
+    : itens;
+
 
   const estiloLink = (ativo: boolean): React.CSSProperties => ({
     display: "block",
@@ -119,7 +134,7 @@ export default function Sidebar({ nome, perfil, usuario }: Props) {
       </div>
 
       <nav style={{ display: "grid", gap: 5 }}>
-        {itens.map(item => {
+        {itensVisiveis.map(item => {
           const ativo = item.rota === "/dashboard"
             ? pathname === "/dashboard"
             : Boolean(item.rota) &&
@@ -135,7 +150,7 @@ export default function Sidebar({ nome, perfil, usuario }: Props) {
             >
               {item.titulo}
             </Link>
-              {item.titulo === "Campanhas Clientes" && (
+              {item.titulo === "Campanhas de Clientes" && (
                 <>
                   <div style={{
                     marginTop: 4,
@@ -195,7 +210,9 @@ export default function Sidebar({ nome, perfil, usuario }: Props) {
           );
         })}
 
-                <Link
+                {!ehRepresentante && (
+<>
+<Link
           href="/gestao-reativacao"
           style={{
             ...estiloLink(pathname === "/gestao-reativacao"),
@@ -220,6 +237,9 @@ export default function Sidebar({ nome, perfil, usuario }: Props) {
         >
           ↳ Ranking de Reativação
         </Link>
+
+        </>
+)}
 
         {perfil.toUpperCase() === "ADMIN" && (
           <>

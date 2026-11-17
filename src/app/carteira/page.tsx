@@ -415,7 +415,8 @@ export default async function CarteiraPage({
     Visão por Grupo Cliente →
   </Link>
 </div>
-          <div style={{
+          {!["REPRESENTANTE", "REP"].includes(perfil) && (
+<div style={{
             background: "#fff7ed",
             border: "1px solid #fed7aa",
             color: "#9a3412",
@@ -429,6 +430,7 @@ export default async function CarteiraPage({
             A confirmação de compra faturada ainda está pendente.
             Referência: {resumo?.referencia ?? "não disponível"}.
           </div>
+)}
 
           {erroBase ? (
             <div style={{
@@ -441,7 +443,8 @@ export default async function CarteiraPage({
             </div>
           ) : (
             <>
-              <form
+              {!["REPRESENTANTE", "REP"].includes(perfil) && (
+<form
                 action="/carteira"
                 method="GET"
                 style={{
@@ -497,6 +500,7 @@ export default async function CarteiraPage({
                   Limpar
                 </Link>
               </form>
+)}
 
               {/* PAINEL_RECEITA_2027 */}
               {mostrarReceita && (<section style={{background: "#fff", border: "1px solid #e2e8f0", borderRadius: 16, padding: 20, marginBottom: 22}}>
@@ -695,7 +699,8 @@ export default async function CarteiraPage({
                 ))}
               </section>
 
-              <p style={{
+              {!["REPRESENTANTE", "REP"].includes(perfil) && (
+<p style={{
                 marginTop: 20,
                 color: "#64748b",
                 fontSize: 12
@@ -704,6 +709,7 @@ export default async function CarteiraPage({
                 Os indicadores respeitam os vínculos de acesso e os filtros
                 aplicados. Nenhum cadastro individual é enviado ao navegador.
               </p>
+)}
 
               <div style={{display: "none"}}>{urlAtual}</div>
             </>

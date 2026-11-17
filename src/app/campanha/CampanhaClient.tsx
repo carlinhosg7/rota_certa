@@ -25,6 +25,7 @@ const MESES: Mes[] = [
   { chave: "2027-01-01", titulo: "Janeiro 2027", curto: "JAN/27" },
   { chave: "2027-02-01", titulo: "Fevereiro 2027", curto: "FEV/27" },
   { chave: "2027-03-01", titulo: "Março 2027", curto: "MAR/27" },
+  { chave: "2027-04-01", titulo: "Abril 2027", curto: "ABR/27" },
 ];
 const TIPOS = [
   { chave: "PRODUCAO", nome: "Entrada Produção", pontos: 60, unidade: "valor" },
@@ -36,18 +37,22 @@ const TIPOS = [
 const brl = new Intl.NumberFormat("pt-BR", { style: "currency", currency: "BRL", maximumFractionDigits: 2 });
 const qtd = new Intl.NumberFormat("pt-BR", { maximumFractionDigits: 2 });
 
-function Caixa({ nome, pontos, maximo, homologado, geral = false }: {
-  nome: string; pontos: number; maximo: number; homologado: boolean; geral?: boolean;
+function Caixa({ nome, pontos, maximo, homologado, previa = false, geral = false }: {
+  nome: string; pontos: number; maximo: number; homologado: boolean; previa?: boolean; geral?: boolean;
 }) {
-  const percentual = homologado && maximo > 0 ? Math.max(0, Math.min(100, pontos / maximo * 100)) : 0;
+  const mostrar = homologado || previa;
+  const percentual = mostrar && maximo > 0 ? Math.max(0, Math.min(100, pontos / maximo * 100)) : 0;
+  const descricao = homologado
+    ? `${qtd.format(percentual)}% da pontuação homologada`
+    : previa ? "Projeção parcial · não homologada" : "Aguardando realizados";
   return (
     <div className={`${styles.tankCard} ${geral ? styles.tankGeneral : ""}`}>
       <div className={styles.tankInformation}>
         <span className={styles.tankLabel}>{nome}</span>
-        <strong className={styles.tankPoints}>{homologado ? qtd.format(pontos) : "—"}<small> / {qtd.format(maximo)} pts</small></strong>
-        <span className={styles.tankStatus}>{homologado ? `${qtd.format(percentual)}% da pontuação` : "Aguardando homologação"}</span>
+        <strong className={styles.tankPoints}>{mostrar ? qtd.format(pontos) : "—"}<small> / {qtd.format(maximo)} pts</small></strong>
+        <span className={styles.tankStatus}>{descricao}</span>
       </div>
-      <div className={styles.tank} role="img" aria-label={`${nome}: ${homologado ? `${percentual.toFixed(1)}%` : "sem pontuação homologada"}`}>
+      <div className={styles.tank} role="img" aria-label={`${nome}: ${mostrar ? `${percentual.toFixed(1)}% da pontuação projetada` : "sem pontuação disponível"}`}>
         <div className={styles.tankTicks}><span>100</span><span>75</span><span>50</span><span>25</span><span>0</span></div>
         <div className={styles.tankWater} style={{ height: `${percentual}%` }} />
       </div>
@@ -95,19 +100,49 @@ export default function CampanhaClient() {
   const supervisores = useMemo(() => [...new Set(Object.values(dados).flatMap(x => x.filtros.supervisores))].sort(), [dados]);
   const reps = useMemo(() => [...new Map(Object.values(dados).flatMap(x => x.filtros.representantes).map(r => [r.codigo, r])).values()].sort((a,b)=>a.nome.localeCompare(b.nome, "pt-BR")), [dados]);
   const ind = (mes: string, chave: string) => dados[mes]?.indicadores.find(x => x.chave === chave);
+  // Projecao operacional, NAO sao pontos de premiacao concedidos.
+  // Comercial: proporcao do valor realizado/meta, limitada a 100% da categoria.
+  // Treinamentos: somente aprovados, no maximo 30 pontos.
+  // Reativacao: nao pontuar enquanto constar DETECTADO_NAO_HOMOLOGADO.
   const situacaoMes = (chave: string) => {
     const resposta = dados[chave];
-    // Bloqueio proposital: API ainda nao confirmou homologacao da pontuacao.
-    return { homologado: Boolean(resposta?.pontuacao.disponivel), pontos: resposta?.pontuacao.concedida ?? 0 };
+    if (!resposta) return { homologado: false, previa: false, pontos: 0 };
+    let soma = 0;
+    let possuiDados = false;
+    for (const ind of resposta.indicadores) {
+      if (["PRODUCAO", "FATURAMENTO", "KIDEX"].includes(ind.chave)) {
+        if (ind.metaValor > 0 && ind.realizadoValor !== null) {
+          possuiDados = true;
+          const fracao = Math.max(0, Math.min(1, ind.realizadoValor / ind.metaValor));
+          soma += fracao * ind.pontos;
+        }
+      } else if (ind.chave === "TREINAMENTOS" && ind.status === "HOMOLOGADO_PARCIAL") {
+        if (ind.metaPares > 0 && ind.realizadoPares !== null && ind.realizadoPares > 0) {
+          possuiDados = true;
+          soma += Math.max(0, Math.min(1, ind.realizadoPares / ind.metaPares)) * 30;
+        }
+      }
+    }
+    return {
+      homologado: Boolean(resposta.pontuacao.disponivel),
+      previa: possuiDados && !resposta.pontuacao.disponivel,
+      pontos: resposta.pontuacao.disponivel ? resposta.pontuacao.concedida : Math.round(soma * 100) / 100,
+    };
   };
+
   const geralHomologado = MESES.every(m => Boolean(dados[m.chave]?.pontuacao.disponivel));
   const geralPontos = MESES.reduce((t,m) => t + situacaoMes(m.chave).pontos, 0);
+  const geralPrevia = MESES.some(m => situacaoMes(m.chave).previa);
   const mesesComMetas = MESES.filter(m => dados[m.chave]?.indicadores.some(i=>i.representantes>0)).length;
 
   return <div className={styles.layout}>
+    <nav aria-label="Acesso à projeção individual" style={{ marginBottom: 16, display: "flex", alignItems: "center", gap: 12, flexWrap: "wrap" }}>
+      <a href="/campanha/projecao" style={{ display: "inline-block", padding: "10px 16px", borderRadius: 9, background: "#173d5d", color: "#fff", textDecoration: "none", fontWeight: 700 }}>Pontuação por representante e supervisor</a>
+      <span style={{ fontSize: 12, color: "#697b8f" }}>Projeção comercial · não homologada</span>
+    </nav>
     <section className={styles.headerPanel}>
       <div className={styles.headerCopy}>
-        <span className={styles.eyebrow}>PAINEL GERENCIAL · 09/11/2026 — 31/03/2027</span>
+        <span className={styles.eyebrow}>PAINEL GERENCIAL · 09/11/2026 — 30/04/2027</span>
         <h2>Visão completa da campanha</h2>
         <p>Todos os meses em uma única matriz, com metas, realizados e acompanhamento de pontos.</p>
       </div>
@@ -127,22 +162,22 @@ export default function CampanhaClient() {
       </div>
     </section>
 
-    {carregando && <div className={styles.notice} role="status">Consultando os cinco meses no Supabase...</div>}
+    {carregando && <div className={styles.notice} role="status">Consultando os seis meses no Supabase...</div>}
     {erro && <div className={styles.error} role="alert">{erro}</div>}
     {!carregando && !erro && Object.keys(dados).length === MESES.length && <>
       <section className={styles.topArea} aria-label="Caixas d'agua da campanha">
-        <Caixa nome="Campanha geral" pontos={geralPontos} maximo={1000} homologado={geralHomologado} geral />
+        <Caixa nome="Campanha geral" pontos={geralPontos} maximo={MESES.length * 200} homologado={geralHomologado} previa={geralPrevia} geral />
         <div className={styles.topSummary}>
-          <div><span>Competências com metas</span><strong>{mesesComMetas} <small>/ 5</small></strong></div>
-          <div><span>Pontuação máxima</span><strong>1.000 <small>pontos</small></strong></div>
-          <p>Pontos e percentuais só aparecem após validação e homologação. A ausência de realizados não representa zero vendas.</p>
+          <div><span>Competências com metas</span><strong>{mesesComMetas} <small>/ {MESES.length}</small></strong></div>
+          <div><span>Pontuação máxima</span><strong>{qtd.format(MESES.length * 200)} <small>pontos</small></strong></div>
+          <p>As caixas exibem uma projeção proporcional do atingimento; não representam pontos de premiação concedidos.</p>
         </div>
       </section>
 
       <section className={styles.section}>
         <div className={styles.sectionHeading}><h3>Caixas d’água por mês</h3><span>Até 200 pontos por mês</span></div>
         <div className={styles.tanksRow}>
-          {MESES.map(m => <Caixa key={m.chave} nome={m.titulo} pontos={situacaoMes(m.chave).pontos} maximo={200} homologado={situacaoMes(m.chave).homologado} />)}
+          {MESES.map(m => <Caixa key={m.chave} nome={m.titulo} pontos={situacaoMes(m.chave).pontos} maximo={200} homologado={situacaoMes(m.chave).homologado} previa={situacaoMes(m.chave).previa} />)}
         </div>
       </section>
 
@@ -162,14 +197,14 @@ export default function CampanhaClient() {
                 const tituloRealizado = tipo.chave === "REATIVACAO" ? "Reativados" : "Homologados";
                 const metaValorTotal = registros.reduce((t,i) => t+(i?.metaValor ?? 0),0);
                 const metaParesTotal = registros.reduce((t,i) => t+(i?.metaPares ?? 0),0);
-                const comRealizados = registros.length > 0 && registros.every(i => i && i.realizadoValor !== null && i.realizadoPares !== null);
+                const comRealizados = registros.some(i => i && i.realizadoValor !== null && i.realizadoPares !== null);
                 const realizadoTotal = comRealizados ? registros.reduce((t,i)=>t+(i?.realizadoValor ?? 0),0) : null;
-                const realizadoQtdTotal = registros.every(i => i && i.realizadoPares !== null)
+                const realizadoQtdTotal = registros.some(i => i && i.realizadoPares !== null)
                   ? registros.reduce((t,i)=>t+(i?.realizadoPares ?? 0),0) : null;
                 const pontosTotal = registros.reduce((t,i)=>t+(i?.pontosConcedidos ?? 0),0);
                 const pontosMaximosEquipe = registros.reduce((t,i)=>t+(i?.representantes ?? 0)*30,0);
                 return <tr key={tipo.chave}>
-                  <th scope="row"><strong>{tipo.nome}</strong><small>{tipo.pontos} pts/mês por representante · {tipo.pontos * 5} pts possíveis por representante na campanha</small></th>
+                  <th scope="row"><strong>{tipo.nome}</strong><small>{tipo.pontos} pts/mês por representante · {tipo.pontos * MESES.length} pts possíveis por representante na campanha</small></th>
                   {MESES.map(m => {
                     const i = ind(m.chave, tipo.chave);
                     return <td key={m.chave}>
@@ -185,7 +220,7 @@ export default function CampanhaClient() {
                           {detalhes && <span className={styles.cellLine}><small>Meta pares</small><span>{qtd.format(i.metaPares)}</span></span>}
                           <span className={styles.cellLine}><small>Realizado</small><span>{i.realizadoValor === null ? "Aguardando" : brl.format(i.realizadoValor)}</span></span>
                           {detalhes && <span className={styles.cellLine}><small>Atingimento</small><span>{i.percentualValor === null ? "—" : `${qtd.format(i.percentualValor)}% *`}</span></span>}
-                          <span className={styles.cellState}>Pontos: aguardando homologação</span>
+                          <span className={styles.cellState}>Pontos oficiais aguardando homologação · prévia nas caixas</span>
                         </div>}
                     </td>;
                   })}
@@ -193,17 +228,17 @@ export default function CampanhaClient() {
                     {registros.every(i => !i) ? <span className={styles.missing}>Pendente</span> : quantidade ? <div className={styles.cell}>
                       <span className={styles.cellLine}><small>Meta</small><strong>{`${qtd.format(metaParesTotal)} ${unidadeQuantidade}`}</strong></span>
                       <span className={styles.cellLine}><small>{tituloRealizado}</small><strong>{realizadoQtdTotal === null ? "Aguardando" : qtd.format(realizadoQtdTotal)}</strong></span>
-                      <span className={styles.cellState}>{tipo.chave === "REATIVACAO" ? "Histórico preservado · pontos não homologados" : `Pontos da equipe: ${qtd.format(pontosTotal)} / ${qtd.format(pontosMaximosEquipe)} · até 150 por representante nos cinco meses`}</span>
+                      <span className={styles.cellState}>{tipo.chave === "REATIVACAO" ? "Histórico preservado · pontos não homologados" : `Pontos da equipe: ${qtd.format(pontosTotal)} / ${qtd.format(pontosMaximosEquipe)} · até 180 por representante nos seis meses`}</span>
                     </div> : <div className={styles.cell}>
                       <span className={styles.cellLine}><small>Meta R$</small><strong>{brl.format(metaValorTotal)}</strong></span>
                       {detalhes && <span className={styles.cellLine}><small>Meta pares</small><span>{qtd.format(metaParesTotal)}</span></span>}
                       <span className={styles.cellLine}><small>Realizado</small><span>{realizadoTotal === null ? "Aguardando" : brl.format(realizadoTotal)}</span></span>
-                      <span className={styles.cellState}>Até {tipo.pontos * 5} pts por representante</span>
+                      <span className={styles.cellState}>Até {tipo.pontos * MESES.length} pts por representante</span>
                     </div>}
                   </td>
                 </tr>;
               })}
-              <tr className={styles.pointsRow}><th>Pontuação mensal</th>{MESES.map(m => <td key={m.chave}><strong>{situacaoMes(m.chave).homologado ? `${qtd.format(situacaoMes(m.chave).pontos)} / 200` : "— / 200"}</strong><small>Não homologado</small></td>)}<td><strong>{geralHomologado ? `${qtd.format(geralPontos)} / 1.000` : "— / 1.000"}</strong><small>Consolidação pendente</small></td></tr>
+              <tr className={styles.pointsRow}><th>Pontuação mensal</th>{MESES.map(m => { const situacao = situacaoMes(m.chave); return <td key={m.chave}><strong>{situacao.homologado ? `${qtd.format(situacao.pontos)} / 200` : situacao.previa ? `~ ${qtd.format(situacao.pontos)} / 200` : "— / 200"}</strong><small>{situacao.homologado ? "Homologado" : situacao.previa ? "Projeção, não homologada" : "Sem realizados"}</small></td>; })}<td><strong>{geralHomologado ? `${qtd.format(geralPontos)} / ${qtd.format(MESES.length * 200)}` : geralPrevia ? `~ ${qtd.format(geralPontos)} / ${qtd.format(MESES.length * 200)}` : `— / ${qtd.format(MESES.length * 200)}`}</strong><small>{geralHomologado ? "Homologado" : "Projeção, não homologada"}</small></td></tr>
             </tbody>
           </table>
         </div>

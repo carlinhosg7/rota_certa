@@ -4,6 +4,8 @@ import { cookies } from 'next/headers';
 import { validarToken } from '@/lib/auth';
 import { representantesPermitidos } from '@/lib/escopo-acesso';
 
+
+import { listarClientesExcluidos } from '@/lib/clientes-excluidos';
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
 
@@ -111,7 +113,12 @@ export async function GET(req: NextRequest) {
       ? await consultarClientes(base, headers, snapshot, 'codigo_cliente', `like.${busca}*`, limite)
       : await consultarClientes(base, headers, snapshot, 'dados->>razaoSocial', `ilike.*${buscaTexto}*`, limite);
 
-    const encontrados = linhas
+        // Clientes excluidos nao podem ser selecionados em novos treinamentos.
+    const clientesExcluidos = await listarClientesExcluidos();
+    const linhasElegiveis = linhas.filter(linha =>
+      !clientesExcluidos.has(codigo(linha.codigo_cliente))
+    );
+const encontrados = linhasElegiveis
       .filter((linha): linha is Linha & { dados: Cliente } => Boolean(linha.dados))
       .map(linha => ({ ...linha.dados, codigoCliente: linha.codigo_cliente }))
       .filter(cliente => idsVinculados(cliente).some(rep => permitidos === null || permitidos.has(rep)))

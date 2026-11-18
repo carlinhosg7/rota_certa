@@ -1,4 +1,3 @@
-import { listarGerentesRegionais } from "@/lib/carteira-gerentes";
 import { carregarCarteira2027 } from "../../../lib/carteira-2027-data";
 import "server-only";
 
@@ -38,7 +37,6 @@ type Cliente = {
 
 type Props = {
   searchParams: Promise<{
-    gerente?: string;
     filtro?: string;
     supervisor?: string;
     representante?: string;
@@ -93,10 +91,6 @@ export default async function ListaCarteira({ searchParams }: Props) {
   const supLogin = cod(u.codigo_supervisor);
 
   const params = await searchParams;
-  const gerenteFiltro = String(params.gerente ?? "").trim().toUpperCase();
-  const gerentesRegionais = await listarGerentesRegionais();
-  const gerentesDisponiveis = [...new Set(gerentesRegionais.map(g => g.gerente))].sort((a,b) => a.localeCompare(b, "pt-BR"));
-  const regionaisGerente = new Set(gerentesRegionais.filter(g => g.gerente === gerenteFiltro).map(g => cod(g.codigo_supervisor)));
   const filtro = titulos[params.filtro ?? ""]
     ? params.filtro!
     : "todos";
@@ -216,13 +210,6 @@ export default async function ListaCarteira({ searchParams }: Props) {
     }
   }
 
-  if (gerenteFiltro) {
-    clientes = clientes.filter(c =>
-      c.supervisores?.some(s =>
-        regionaisGerente.has(cod(s.codigo))
-      )
-    );
-  }
 
   if (
     supervisor &&
@@ -334,7 +321,6 @@ export default async function ListaCarteira({ searchParams }: Props) {
   function urlPagina(numero: number) {
     const q = new URLSearchParams();
     q.set("filtro", filtro);
-    if (gerenteFiltro) q.set("gerente", gerenteFiltro);
     if (supervisor) q.set("supervisor", supervisor);
     if (representante) q.set("representante", representante);
     if (busca) q.set("busca", busca);
@@ -379,13 +365,6 @@ export default async function ListaCarteira({ searchParams }: Props) {
             }}
           >
             <input type="hidden" name="filtro" value={filtro} />
-             <label style={{display: "grid", gap: 5, fontSize: 12}}>
-               Gerente
-               <select name="gerente" defaultValue={gerenteFiltro} style={{padding: 12, border: "1px solid #cbd5e1", borderRadius: 9}}>
-                 <option value="">Todos</option>
-                 {gerentesDisponiveis.map(g => <option key={g} value={g}>{g}</option>)}
-               </select>
-             </label>
             <input
               type="hidden"
               name="supervisor"

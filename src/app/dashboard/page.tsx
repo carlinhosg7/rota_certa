@@ -3,6 +3,7 @@ import { redirect } from "next/navigation";
 import Image from "next/image";
 import { validarToken } from "@/lib/auth";
 import Sidebar from "@/components/Sidebar";
+import AlertasReativacao from "@/components/AlertasReativacao";
 
 export default async function Dashboard() {
   const token = (await cookies()).get("kidy_session")?.value;
@@ -20,6 +21,17 @@ export default async function Dashboard() {
   return (
     <div className="app-shell">
       <Sidebar nome={nome} perfil={perfil} usuario={usuario} />
+
+      <div
+        style={{
+          position: "fixed",
+          top: 16,
+          right: 20,
+          zIndex: 100
+        }}
+      >
+        <AlertasReativacao />
+      </div>
       <main
         className="content"
         style={{

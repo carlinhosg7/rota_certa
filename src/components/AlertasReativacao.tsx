@@ -144,14 +144,12 @@ type ClienteCarteiraItem = {
     let ativo = true;
 
     async function iniciar() {
-      const total = await atualizar();
+      await atualizar();
 
       if (!ativo) return;
 
-      // Mostra automaticamente o painel na entrada do dashboard.
-      if (total > 0) {
-        setAberto(true);
-      }
+      // Abrir Central de Reativacao na entrada do aplicativo.
+      setAberto(true);
     }
 
     void iniciar();

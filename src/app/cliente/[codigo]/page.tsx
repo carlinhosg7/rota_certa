@@ -672,7 +672,7 @@ const janelaComercial = await calcularJanelaCompraFaturamento(
       score: 0,
       potencial: "ALTO",
     };
-    return [play, ...produtosPotenciaisCalculados.filter(p => normalizarLinha360(p.codigoLinha) !== linhaPlay360)].slice(0, 8);
+    return [...(playAtiva360 ? [play] : []), ...produtosPotenciaisCalculados.filter(p => normalizarLinha360(p.codigoLinha) !== linhaPlay360)].slice(0, 8);
   })();
 
   const principalPotencial = produtosPotenciais.find(p => normalizarLinha360(p.codigoLinha) !== linhaPlay360 && p.clientes.size > 0) || null;
@@ -1019,10 +1019,7 @@ const janelaComercial = await calcularJanelaCompraFaturamento(
       titulo: grupo.titulo,
       descricao: grupo.descricao,
       amostra: grupo.clientes.length,
-      produtos: [
-        play,
-        ...produtos.filter(p => !p.play)
-      ].slice(0, 8),
+      produtos: [...(playAtiva360 ? [play] : []), ...produtos.filter(p => !p.play)].slice(0, 8),
     };
   });
 

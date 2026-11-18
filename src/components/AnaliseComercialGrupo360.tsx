@@ -376,10 +376,7 @@ export default async function AnaliseComercialGrupo360({ vendas, clientesGrupo, 
       titulo: universo.titulo,
       descricao: universo.descricao,
       amostra: universo.clientes.length,
-      produtos: [
-        play,
-        ...produtos.filter(p => !p.play)
-      ].slice(0, 8),
+      produtos: [...(linhasAutorizadasV8.has("7") ? [play] : []), ...produtos.filter(p => !p.play)].slice(0, 8),
     };
   });
 

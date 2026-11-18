@@ -36,6 +36,7 @@ const TIPOS = [
 ] as const;
 const brl = new Intl.NumberFormat("pt-BR", { style: "currency", currency: "BRL", maximumFractionDigits: 2 });
 const qtd = new Intl.NumberFormat("pt-BR", { maximumFractionDigits: 2 });
+const pares = new Intl.NumberFormat("pt-BR", { maximumFractionDigits: 0 });
 
 function Caixa({ nome, pontos, maximo, homologado, previa = false, geral = false }: {
   nome: string; pontos: number; maximo: number; homologado: boolean; previa?: boolean; geral?: boolean;
@@ -210,14 +211,14 @@ export default function CampanhaClient() {
                     return <td key={m.chave}>
                       {!i ? <span className={styles.missing}>{tipo.chave === "TREINAMENTOS" || tipo.chave === "REATIVACAO" ? "Integração pendente" : "Sem meta cadastrada"}</span> :
                         quantidade ? <div className={styles.cell}>
-                          <span className={styles.cellLine}><small>Meta</small><strong>{`${qtd.format(i.metaPares)} ${unidadeQuantidade}`}</strong></span>
+                          <span className={styles.cellLine}><small>Meta</small><strong>{`${pares.format(i.metaPares)} ${unidadeQuantidade}`}</strong></span>
                           {detalhes && <span className={styles.cellLine}><small>Representantes</small><span>{tipo.chave === "REATIVACAO" ? qtd.format(i.representantes) : `${qtd.format(i.representantes)} × 5`}</span></span>}
                           <span className={styles.cellLine}><small>{tituloRealizado}</small><strong>{i.realizadoPares === null ? "Aguardando" : qtd.format(i.realizadoPares)}</strong></span>
                           {detalhes && <span className={styles.cellLine}><small>Atingimento</small><span>{i.percentualPares === null ? "—" : `${qtd.format(i.percentualPares)}%`}</span></span>}
                           <span className={styles.cellState}>{tipo.chave === "REATIVACAO" ? "Reativações detectadas na Carteira 02 → 01 · pontos não homologados" : `Pontos da equipe: ${qtd.format(i.pontosConcedidos)} / ${qtd.format(i.representantes * 30)} · até 30 por representante`}</span>
                         </div> : <div className={styles.cell}>
                           <span className={styles.cellLine}><small>Meta R$</small><strong>{brl.format(i.metaValor)}</strong></span>
-                          {detalhes && <span className={styles.cellLine}><small>Meta pares</small><span>{qtd.format(i.metaPares)}</span></span>}
+                          {detalhes && <span className={styles.cellLine}><small>Meta pares</small><span>{pares.format(i.metaPares)}</span></span>}
                           <span className={styles.cellLine}><small>Realizado</small><span>{i.realizadoValor === null ? "Aguardando" : brl.format(i.realizadoValor)}</span></span>
                           {detalhes && <span className={styles.cellLine}><small>Atingimento</small><span>{i.percentualValor === null ? "—" : `${qtd.format(i.percentualValor)}% *`}</span></span>}
                           <span className={styles.cellState}>Pontos oficiais aguardando homologação · prévia nas caixas</span>
@@ -226,12 +227,12 @@ export default function CampanhaClient() {
                   })}
                   <td className={styles.totalCell}>
                     {registros.every(i => !i) ? <span className={styles.missing}>Pendente</span> : quantidade ? <div className={styles.cell}>
-                      <span className={styles.cellLine}><small>Meta</small><strong>{`${qtd.format(metaParesTotal)} ${unidadeQuantidade}`}</strong></span>
+                      <span className={styles.cellLine}><small>Meta</small><strong>{`${pares.format(metaParesTotal)} ${unidadeQuantidade}`}</strong></span>
                       <span className={styles.cellLine}><small>{tituloRealizado}</small><strong>{realizadoQtdTotal === null ? "Aguardando" : qtd.format(realizadoQtdTotal)}</strong></span>
                       <span className={styles.cellState}>{tipo.chave === "REATIVACAO" ? "Histórico preservado · pontos não homologados" : `Pontos da equipe: ${qtd.format(pontosTotal)} / ${qtd.format(pontosMaximosEquipe)} · até 180 por representante nos seis meses`}</span>
                     </div> : <div className={styles.cell}>
                       <span className={styles.cellLine}><small>Meta R$</small><strong>{brl.format(metaValorTotal)}</strong></span>
-                      {detalhes && <span className={styles.cellLine}><small>Meta pares</small><span>{qtd.format(metaParesTotal)}</span></span>}
+                      {detalhes && <span className={styles.cellLine}><small>Meta pares</small><span>{pares.format(metaParesTotal)}</span></span>}
                       <span className={styles.cellLine}><small>Realizado</small><span>{realizadoTotal === null ? "Aguardando" : brl.format(realizadoTotal)}</span></span>
                       <span className={styles.cellState}>Até {tipo.pontos * MESES.length} pts por representante</span>
                     </div>}

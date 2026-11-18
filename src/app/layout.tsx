@@ -15,14 +15,14 @@ const geistMono = Geist_Mono({
 });
 
 export const metadata: Metadata = {
-  manifest: "/manifest.webmanifest",
+  manifest: "/manifest.webmanifest?v=kidy-neon-20261118",
   icons: {
     icon: [
-      { url: "/icon-192.png", sizes: "192x192", type: "image/png" },
-      { url: "/icon-512.png", sizes: "512x512", type: "image/png" }
+      { url: "/icon-kidy-sales-192.png", sizes: "192x192", type: "image/png" },
+      { url: "/icon-kidy-sales-512.png", sizes: "512x512", type: "image/png" }
     ],
     apple: [
-      { url: "/apple-touch-icon.png", sizes: "180x180", type: "image/png" }
+      { url: "/apple-touch-kidy-sales-180.png", sizes: "180x180", type: "image/png" }
     ]
   },
   appleWebApp: {

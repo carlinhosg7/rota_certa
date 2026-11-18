@@ -12,7 +12,11 @@ async function json(res:Response) {
   if (!res.ok) throw Error(String(data.erro||`HTTP ${res.status}`));
   return data;
 }
-export default function EvidenciasAprovacoes() {
+export default function EvidenciasAprovacoes({
+  podeAprovar,
+}: {
+  podeAprovar: boolean;
+}) {
   const [registros,setRegistros]=useState<Registro[]>([]);
   const [homologacao,setHomologacao]=useState(false);
   const [podeHomologar,setPodeHomologar]=useState(false);
@@ -101,7 +105,7 @@ export default function EvidenciasAprovacoes() {
   const botao:React.CSSProperties={padding:'11px 15px',borderRadius:9,border:'none',background:'#ee7b0b',color:'#fff',fontWeight:700,cursor:'pointer'};
   const campo:React.CSSProperties={padding:10,border:'1px solid #cbd5e1',borderRadius:8,maxWidth:'100%'};
   return <section style={{background:'#fff',border:'1px solid #dbe3ed',borderRadius:12,padding:18,marginTop:18,color:'#1e293b'}}>
-    <h2 style={{fontSize:20,margin:'0 0 6px'}}>4. Fotos e aprovacao gerencial</h2>
+    <h2 style={{fontSize:20,margin:'0 0 6px'}}>{podeAprovar ? '4. Fotos e aprovação gerencial' : '4. Fotos e envio para aprovação'}</h2>
     <p style={{fontSize:13,color:'#64748b'}}>Salve um rascunho primeiro. Depois use a camera ou selecione fotos existentes (ate cinco fotos, 5 MB cada). E necessario ao menos uma foto para enviar a aprovacao.</p>
     <div style={{display:'flex',gap:10,flexWrap:'wrap',alignItems:'center'}}>
       <button
@@ -173,7 +177,7 @@ export default function EvidenciasAprovacoes() {
         </div>)}
       </div>
       {escolhido.status==='RASCUNHO'&&<button type="button" style={{...botao,background:'#166534'}} onClick={()=>void agir('ENVIAR')} disabled={ocupado||fotos.length===0}>Enviar para aprovacao do gestor</button>}
-      {escolhido.status==='ENVIADO'&&<div style={{display:'flex',flexWrap:'wrap',gap:10,alignItems:'center'}}>
+      {podeAprovar && escolhido.status==='ENVIADO'&&<div style={{display:'flex',flexWrap:'wrap',gap:10,alignItems:'center'}}>
         <button type="button" style={{...botao,background:'#166534'}} onClick={()=>void agir('APROVAR')} disabled={ocupado}>Aprovar (gestor)</button>
         <textarea aria-label="Justificativa da reprovacao" placeholder="Justificativa para reprovar (minimo 10 caracteres)" style={{...campo,flex:'1 1 250px'}} value={motivo} onChange={e=>setMotivo(e.target.value)}/>
         <button type="button" style={{...botao,background:'#b91c1c'}} disabled={ocupado||motivo.trim().length<10} onClick={()=>void agir('REPROVAR')}>Reprovar (gestor)</button>

@@ -51,14 +51,14 @@ export default function Sidebar({ nome, perfil, usuario }: Props) {
   }
 
   const itens = [
-    { titulo: "Visão Comercial", href: "/dashboard#planejamento", rota: "/dashboard" },
+    { titulo: "Visão Comercial", href: "/venda-mais#planejamento", rota: "/venda-mais" },
     { titulo: "Metas", href: "/metas", rota: "/metas" },
     { titulo: "Campanhas Representantes", href: "/campanha", rota: "/campanha" },
     { titulo: "Campanhas de Clientes", href: "/campanhas-clientes", rota: "/campanhas-clientes" },
     { titulo: "Share", href: "/share", rota: "/share" },
     { titulo: "Gestão de Atendimentos", href: "/gestao-atendimentos", rota: "/gestao-atendimentos" },
-    { titulo: "Venda Mais+", href: "/dashboard#venda-mais", rota: "" },
-    { titulo: "Análise Preditiva", href: "/dashboard#clientes", rota: "" },
+    { titulo: "Venda Mais+", href: "/venda-mais#venda-mais", rota: "/venda-mais" },
+    { titulo: "Análise Preditiva", href: "/venda-mais#clientes", rota: "/venda-mais" },
     { titulo: "Gestão de Carteira 2027", href: "/carteira", rota: "/carteira" },
     { titulo: "Carteira 02 por Representante", href: "/carteira/por-representante", rota: "/carteira/por-representante" }
   ];
@@ -118,7 +118,7 @@ export default function Sidebar({ nome, perfil, usuario }: Props) {
       >
         ☰ Ocultar menu
       </button>
-      <div className="brand">
+      <Link href="/dashboard" className="brand" style={{ textDecoration: "none", color: "inherit", cursor: "pointer" }}>
         <Image
           src="/logo-kidy.png"
           alt="KIDY"
@@ -130,7 +130,7 @@ export default function Sidebar({ nome, perfil, usuario }: Props) {
           <b>KIDY</b>
           <span>Sales Intelligence</span>
         </div>
-      </div>
+      </Link>
 
       <nav style={{ display: "grid", gap: 5 }}>
         {itensVisiveis.map(item => {

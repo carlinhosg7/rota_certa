@@ -1,16 +1,57 @@
 import { cookies } from "next/headers";
 import { redirect } from "next/navigation";
+import Image from "next/image";
 import { validarToken } from "@/lib/auth";
 import Sidebar from "@/components/Sidebar";
-import DashboardClient from "@/components/DashboardClient";
-import AlertasReativacao from "@/components/AlertasReativacao";
 
-export default async function Dashboard(){
- const token=(await cookies()).get("kidy_session")?.value; if(!token)redirect("/"); const u:any=await validarToken(token); if(!u)redirect("/");
- const nome=String(u.nome||u.usuario||"Usuário"), perfil=String(u.perfil||"").toUpperCase();
- return <div className="app-shell"><Sidebar nome={nome} perfil={perfil} usuario={String(u.usuario||"")} /><main className="content">
-  <header className="topbar"><div><span className="eyebrow">INTELIGÊNCIA COMERCIAL</span><h1>KIDY Sales Intelligence</h1><p>Supervisor → Representante → Cidade → Clientes prioritários</p></div><div style={{ display: "flex", alignItems: "center", gap: 12, flexWrap: "wrap" }}><AlertasReativacao /><div className="profile-pill"><span>{nome}</span><b>{perfil}</b></div></div></header>
-  <section className="hero-kidy"><div><span className="hero-tag">BASE COMERCIAL REAL</span><h2>Venda Mais+</h2><p>Carteira, histórico de compras e limite financeiro conectados ao novo sistema.</p></div><div className="hero-mark">KIDY</div></section>
-  <DashboardClient />
- </main></div>
+export default async function Dashboard() {
+  const token = (await cookies()).get("kidy_session")?.value;
+  if (!token) redirect("/");
+
+  const sessao = await validarToken(token);
+  if (!sessao) redirect("/");
+
+  const usuario = String(sessao.usuario || "");
+  const nome = usuario.trim().toLowerCase() === "demo.rep"
+    ? "DemonstraÃ§Ã£o KIDY"
+    : String(sessao.nome || sessao.usuario || "UsuÃ¡rio");
+  const perfil = String(sessao.perfil || "").toUpperCase();
+
+  return (
+    <div className="app-shell">
+      <Sidebar nome={nome} perfil={perfil} usuario={usuario} />
+      <main
+        className="content"
+        style={{
+          display: "flex",
+          alignItems: "center",
+          justifyContent: "center",
+          padding: "clamp(12px, 2vw, 28px)",
+          minWidth: 0,
+          minHeight: "100dvh",
+        }}
+      >
+        <div
+          style={{
+            position: "relative",
+            width: "100%",
+            maxWidth: 1672,
+            aspectRatio: "1672 / 941",
+            borderRadius: 16,
+            overflow: "hidden",
+            boxShadow: "0 12px 32px rgba(67, 39, 10, .10)",
+          }}
+        >
+          <Image
+            src="/kidy-home-banner.png"
+            alt="KIDY Sales Intelligence â€” InteligÃªncia que transforma dados em resultados"
+            fill
+            priority
+            sizes="(max-width: 1000px) 100vw, calc(100vw - 280px)"
+            style={{ objectFit: "contain" }}
+          />
+        </div>
+      </main>
+    </div>
+  );
 }

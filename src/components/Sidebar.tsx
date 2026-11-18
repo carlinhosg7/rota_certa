@@ -69,7 +69,6 @@ export default function Sidebar({ nome, perfil, usuario }: Props) {
     "Metas",
     "Campanhas Representantes",
     "Campanhas de Clientes",
-    "Análise Preditiva",
     "Gestão de Carteira 2027",
   ]);
 

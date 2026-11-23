@@ -163,8 +163,8 @@ export default async function ListaCarteira({ searchParams }: Props) {
     const todos = normalizarVinculos(cliente.representantes);
 
     const visiveis = repsPermitidos === null
-      ? atuais
-      : atuais.filter(r => repsPermitidos.has(cod(r.codigo)));
+      ? todos
+      : todos.filter(r => repsPermitidos.has(cod(r.codigo)));
 
     const supervisores = new Map<string, Vinculo>();
 
@@ -203,7 +203,7 @@ export default async function ListaCarteira({ searchParams }: Props) {
       clientes = [];
     } else {
       clientes = clientes.filter(c =>
-        c.representanteAtual?.some(r =>
+        c.representantes?.some(r =>
           repsPermitidos.has(cod(r.codigo))
         )
       );
@@ -235,7 +235,7 @@ export default async function ListaCarteira({ searchParams }: Props) {
     clientes = [];
   } else if (repFiltro) {
     clientes = clientes.filter(c =>
-      c.representanteAtual?.some(r =>
+      c.representantes?.some(r =>
         cod(r.codigo) === repFiltro
       )
     );

@@ -14,7 +14,7 @@ import Sidebar from "@/components/Sidebar";
 
 import CartaoTaxaReativacao from "@/components/CartaoTaxaReativacao";
 import FiltrosRegionalRepresentante from "@/components/FiltrosRegionalRepresentante";
-import { carregarMapaRepresentantes } from "@/lib/representantes-oficiais";
+import { carregarMapaRepresentantes, normalizarRepresentante } from "@/lib/representantes-oficiais";
 import CartaoClientesReativados from "@/components/CartaoClientesReativados";
 
 export const runtime = "nodejs";
@@ -173,8 +173,29 @@ export default async function CarteiraPage({
 
   // Controle de acesso aplicado ANTES dos filtros da interface.
   if (perfil === "REPRESENTANTE" || perfil === "REP") {
+    const mapaAcesso = await carregarMapaRepresentantes();
+    const repAtual = normalizarRepresentante(
+      repLogin,
+      mapaAcesso
+    ).codigo;
+
+    const cadastroAtual = mapaAcesso.cadastro.get(repAtual);
+    const codigosAutorizados = new Set<string>();
+
+    if (cadastroAtual?.ativo) {
+      codigosAutorizados.add(repAtual);
+
+      for (const [antigo, atual] of mapaAcesso.dePara) {
+        if (atual === repAtual) {
+          codigosAutorizados.add(antigo);
+        }
+      }
+    }
+
     clientes = clientes.filter(c =>
-      c.representantes?.some(r => codigo(r.codigo) === repLogin)
+      c.representantes?.some(r =>
+        codigosAutorizados.has(codigo(r.codigo))
+      )
     );
   } else if (perfil === "SUPERVISOR" || perfil === "GERENTE") {
     if (!acessoGlobal(sessao)) {

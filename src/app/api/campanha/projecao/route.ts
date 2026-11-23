@@ -104,7 +104,7 @@ export async function GET(req: NextRequest) {
         const valores = item.modalidades[m.chave] ?? { meta: null, realizado: null };
         const calculavel = valores.meta !== null && valores.meta > 0 && valores.realizado !== null;
         const atingimento = calculavel ? Math.max(0, 100 * valores.realizado! / valores.meta!) : null;
-        const pontosProjetados = calculavel ? Math.min(m.limite, m.limite * atingimento! / 100) : null;
+        const pontosProjetados = calculavel ? (valores.realizado! >= valores.meta! ? m.limite : 0) : null;
         return { chave: m.chave, meta: valores.meta, realizado: valores.realizado,
           atingimento, teto: m.limite, pontosProjetados,
           situacao: valores.meta === null ? "SEM_META" : valores.meta <= 0 ? "META_INVALIDA" :
@@ -128,10 +128,10 @@ export async function GET(req: NextRequest) {
 
     return NextResponse.json({
       campanha: CAMPANHA, competencia,
-      criterio: "PROJECAO_PROPORCIONAL_NAO_HOMOLOGADA",
+      criterio: "PROJECAO_BINARIA_100_POR_CENTO_NAO_HOMOLOGADA",
       escalaIndividualComercial: 140,
       pontuacaoConcedida: null,
-      observacao: "Simulação proporcional, limitada por indicador. Ausência de realizado não equivale a zero. Treinamento e reativação não incluídos. Não concede prêmio.",
+      observacao: "Simulação individual: 100% ou mais da meta concede a pontuação integral do indicador; abaixo de 100% concede zero. Ausência de realizado não equivale a zero. Treinamento e reativação não incluídos. Não concede prêmio.",
       resumo: { representantes: representantes.length, representantesComMeta: aptos.length,
         somaPontosIndividuais: totalProjetado,
         mediaPontosPorRepresentanteComMeta: aptos.length ? totalProjetado / aptos.length : null },

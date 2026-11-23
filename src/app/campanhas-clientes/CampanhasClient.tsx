@@ -31,9 +31,19 @@ const CAMPANHAS: Campanha[] = [
 ];
 
 const CATEGORIAS = ["Todas", "Clientes", "Representantes"] as const;
+
+const CAMPANHAS_TRANSFERIDAS = new Set([
+  "amostra-anuncio",
+  "amostra-regras",
+  "kidex-bolso"
+]);
 const arte = (pagina: number) => `/campanhas/artes/campanha-${String(pagina).padStart(2, "0")}.webp`;
 
-export default function CampanhasClient() {
+export default function CampanhasClient({
+  modo = "clientes"
+}: {
+  modo?: "clientes" | "representantes";
+}) {
   const [pesquisa, setPesquisa] = useState("");
   const [categoria, setCategoria] = useState<string>("Todas");
   const [selecionada, setSelecionada] = useState<Campanha | null>(null);
@@ -53,10 +63,14 @@ export default function CampanhasClient() {
   }, [selecionada]);
 
   const filtradas = useMemo(() => CAMPANHAS.filter(c => {
+    const transferida = CAMPANHAS_TRANSFERIDAS.has(c.id);
+
+    if (modo === "representantes" && !transferida) return false;
+    if (modo === "clientes" && transferida) return false;
     const busca = `${c.titulo} ${c.destaque} ${c.detalhes.join(" ")}`.toLocaleLowerCase("pt-BR");
-    return (categoria === "Todas" || categoria === c.categoria) &&
+    return (modo === "representantes" || categoria === "Todas" || categoria === c.categoria) &&
       busca.includes(pesquisa.toLocaleLowerCase("pt-BR"));
-  }), [pesquisa, categoria]);
+  }), [pesquisa, categoria, modo]);
 
   const cards = filtradas.filter(c => c.pagina > 1 && c.pagina < 13);
 
@@ -65,10 +79,10 @@ export default function CampanhasClient() {
       <div className={styles.apresentacao}>
         <div className={styles.apresentacaoTexto}>
           <span className={styles.selo}>KIDY • SP E SUL</span>
-          <h2>Campanhas de novembro de 2026.</h2>
+          <h2>{modo === "representantes" ? "Campanhas dos Representantes" : "Campanhas de novembro de 2026."}</h2>
           <p>Consulte as artes oficiais, as condições comerciais e os benefícios de cada campanha.</p>
           <div className={styles.metadados}>
-            <span>NOVEMBRO 2026</span><span>11 PEÇAS DE CAMPANHA</span><span>13 PÁGINAS</span>
+            <span>NOVEMBRO 2026</span><span>{modo === "representantes" ? "3 ARTES DOS REPRESENTANTES" : "8 PEÇAS NA GALERIA"}</span><span>13 PÁGINAS</span>
           </div>
           {documentoDisponivel && <a className={styles.pdfLink} href="/campanhas/CAMPANHAS.pdf" target="_blank" rel="noreferrer">Abrir PDF original ↗</a>}
           <p className={styles.ressalva}>As datas e condições são as do material fornecido. Campanhas com prazo encerrado permanecem aqui para consulta histórica; confirme a vigência antes de ofertar benefícios.</p>
@@ -83,13 +97,23 @@ export default function CampanhasClient() {
         <div><span className={styles.rotulo}>MATERIAL OFICIAL • NOVEMBRO 2026</span><h3>Galeria de campanhas</h3></div>
         <div className={styles.controles}>
           <input aria-label="Buscar campanha" placeholder="Buscar campanha, linha ou benefício..." value={pesquisa} onChange={e => setPesquisa(e.target.value)} />
-          <select aria-label="Filtrar público" value={categoria} onChange={e => setCategoria(e.target.value)}>{CATEGORIAS.map(c => <option key={c} value={c}>{c}</option>)}</select>
+          {modo === "clientes" && (
+            <select
+              aria-label="Filtrar público"
+              value={categoria}
+              onChange={e => setCategoria(e.target.value)}
+            >
+              {CATEGORIAS.map(c => (
+                <option key={c} value={c}>{c}</option>
+              ))}
+            </select>
+          )}
         </div>
       </div>
 
       <div className={styles.grade}>
         {cards.map(c => (
-          <article className={styles.item} key={c.id}>
+          <article id={c.id} className={styles.item} key={c.id}>
             <button className={styles.arte} type="button" onClick={() => setSelecionada(c)} aria-label={`Ampliar arte: ${c.titulo}`}>
               <img src={arte(c.pagina)} loading="lazy" alt={`Arte oficial: ${c.titulo}`} />
               <span className={styles.ampliar}>⤢ Ampliar campanha</span>

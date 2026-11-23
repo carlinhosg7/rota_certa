@@ -11,6 +11,14 @@ export default async function CampanhaPage() {
   if (!usuario) redirect("/");
   const nome = String(usuario.nome || usuario.usuario || "Usuario");
   const perfil = String(usuario.perfil || "").toUpperCase();
+
+  const podeVerPainelGerencial = [
+    "SUPERVISOR",
+    "GERENTE",
+    "DIRETOR",
+    "ADMIN",
+    "ADMINISTRADOR"
+  ].includes(perfil);
   return (
     <div className="app-shell">
       <Sidebar nome={nome} perfil={perfil} usuario={String(usuario.usuario || "")} />
@@ -20,7 +28,7 @@ export default async function CampanhaPage() {
           <h1>Conquiste Sua Amostra 2027</h1>
           <p>Acompanhamento das metas e indicadores da campanha</p>
         </div><div className="profile-pill"><span>{nome}</span><b>{perfil}</b></div></header>
-<CampanhaClient />
+<CampanhaClient podeVerPainelGerencial={podeVerPainelGerencial} />
       </main>
     </div>
   );

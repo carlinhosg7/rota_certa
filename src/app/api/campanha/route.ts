@@ -114,8 +114,92 @@ export async function GET(request: NextRequest) {
 
     const { data, error } = await consulta;
     if (error) throw new Error(`Consulta do painel: ${error.message}`);
-    const linhas = (data ?? []) as Linha[];
+    let linhas = (data ?? []) as Linha[];
     if (linhas.length === 1000) throw new Error("Limite de consulta atingido. Implementar paginacao antes de exibir totais.");
+    const originais = linhas;
+    // KIDY_REALIZADOS_MENSAIS_ATIVOS_V2
+    // Quando houver carga mensal ativa, os realizados do historico diario sao
+    // substituidos INTEGRALMENTE por modalidade. As metas oficiais permanecem.
+    type Mensal = {
+      campanha: string;
+      competencia: string;
+      origem: string;
+      modalidade: string;
+      codigo_representante: string;
+      representante_nome: string | null;
+      supervisor_origem: string | null;
+      qtd_pares: number | string;
+      valor_realizado: number | string;
+    };
+    const { data: mensaisData, error: mensaisErro } = await supabase
+      .from("kidy_campanha_realizados_mensais_ativos")
+      .select("campanha,competencia,origem,modalidade,codigo_representante,representante_nome,supervisor_origem,qtd_pares,valor_realizado")
+      .eq("campanha", CAMPANHA)
+      .eq("competencia", competencia)
+      .range(0, 999);
+    if (mensaisErro) throw new Error(`Realizados mensais: ${mensaisErro.message}`);
+    const mensais = (mensaisData ?? []) as Mensal[];
+    if (mensais.length === 1000) throw new Error("Limite de realizados mensais atingido.");
+    const chaveMod = (origem: string, modalidade: string) => `${origem}|${modalidade}`;
+    const modAtivas = new Set(mensais.map(m => chaveMod(m.origem, m.modalidade)));
+    const chaveRep = (origem: string, modalidade: string, rep: string) =>
+      `${chaveMod(origem, modalidade)}|${cod(rep)}`;
+    const mensaisPorRep = new Map<string, Mensal>();
+    for (const mensal of mensais) {
+      const chave = chaveRep(mensal.origem, mensal.modalidade, mensal.codigo_representante);
+      if (mensaisPorRep.has(chave)) throw new Error(`Realizado mensal duplicado: ${chave}`);
+      mensaisPorRep.set(chave, mensal);
+    }
+    const consumidos = new Set<string>();
+    const linhasCombinadas: Linha[] = [];
+    for (const antiga of originais) {
+      const mod = chaveMod(antiga.origem, antiga.modalidade);
+      if (!modAtivas.has(mod)) {
+        linhasCombinadas.push(antiga); // Sem carga ativa: mantem historico original.
+        continue;
+      }
+      const chave = chaveRep(antiga.origem, antiga.modalidade, antiga.codigo_representante);
+      const mensal = mensaisPorRep.get(chave);
+      // Remove movimentos antigos sem meta que nao constem na nova carga.
+      if (antiga.status_dados === "SEM_META" && !mensal) continue;
+      if (mensal) {
+        if (consumidos.has(chave)) throw new Error(`Meta duplicada na base para ${chave}`);
+        consumidos.add(chave);
+      }
+      linhasCombinadas.push({
+        ...antiga,
+        realizado_pares: mensal ? mensal.qtd_pares : null,
+        realizado_valor: mensal ? mensal.valor_realizado : null,
+        status_dados: mensal
+          ? antiga.status_dados === "SEM_META" ? "SEM_META" : "PARCIAL"
+          : "SEM_DADOS"
+      });
+    }
+    // Inclui os representantes da nova carga que nao estavam na view antiga.
+    for (const mensal of mensais) {
+      const chave = chaveRep(mensal.origem, mensal.modalidade, mensal.codigo_representante);
+      if (consumidos.has(chave)) continue;
+      linhasCombinadas.push({
+        campanha: mensal.campanha,
+        competencia: mensal.competencia,
+        origem: mensal.origem,
+        modalidade: mensal.modalidade,
+        codigo_representante: cod(mensal.codigo_representante),
+        representante_nome: mensal.representante_nome,
+        codigo_supervisor: mensal.supervisor_origem,
+        meta_pares: 0,
+        meta_valor: 0,
+        realizado_pares: mensal.qtd_pares,
+        realizado_valor: mensal.valor_realizado,
+        status_dados: "SEM_META"
+      });
+    }
+    linhas = linhasCombinadas;
+    console.log("[CAMPANHA REALIZADOS MENSAIS]", {
+      competencia, modalidadesAtivas: [...modAtivas],
+      registrosMensais: mensais.length, linhasCombinadas: linhasCombinadas.length
+    });
+
 
     const visiveis = linhas.flatMap(r => {
       const codigoAtual = normalizarRepresentante(

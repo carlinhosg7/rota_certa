@@ -2035,19 +2035,119 @@ const janelaComercial = await calcularJanelaCompraFaturamento(
         <ProdutosPotencialAbas abas={abasPotencialV4} />
 
         {/* RESULTADO DO ATENDIMENTO */}
-        <GestaoReativacao codigoCliente={cliente.codigo} razaoSocial={razaoSocial360} cnpj={cadastro2027?.cnpj ?? ""} />
-        <section style={styles.preditiva}>
-          <div>
-            <div style={styles.eyebrowBranco}>INTELIGÊNCIA COMERCIAL</div>
-            <h2 style={styles.preditivaTitulo}>Próxima ação sugerida</h2>
-            <p style={styles.preditivaTexto}>
-              {principalPotencial
-                ? `Trabalhar ${principalPotencial.linha}. O cliente ainda não possui histórico nessa linha, enquanto ${principalPotencial.penetracao.toFixed(0)}% dos ${grupoSimilar.length} clientes semelhantes compram. Como referência de abordagem, o grupo apresenta mediana de ${numero(principalPotencial.paresMedianos)} pares${referenciasAutorizadasSugestao.length ? `, priorizando as referências atualmente autorizadas ${referenciasAutorizadasSugestao.slice(0, 3).map((r) => r.referencia).join(", ")}` : ""}.`
-                : "Priorize as linhas de maior score comercial e as referências com histórico mais consistente para este cliente."}
-            </p>
+        {cadastro2027?.carteira === "02_REATIVACAO" && <GestaoReativacao codigoCliente={cliente.codigo} razaoSocial={razaoSocial360} cnpj={cadastro2027?.cnpj ?? ""} />}
+        <section
+  className="pm7-section"
+  style={{
+    background: "linear-gradient(135deg, #d86c00, #ff9514)",
+    border: "1px solid #ed7900",
+    color: "#ffffff",
+    padding: "22px",
+    borderRadius: "18px"
+  }}
+>
+  <div className="pm7-heading">
+    <div className="pm7-heading-left">
+      <span
+        className="pm7-number"
+        style={{
+          background: "#ffffff",
+          color: "#d86c00"
+        }}
+      >
+        ✦
+      </span>
+      <h2 style={{ color: "#ffffff" }}>
+        Próxima ação sugerida
+      </h2>
+    </div>
+    <span
+      className="pm7-count"
+      style={{ color: "#ffffff" }}
+    >
+      MINHA CARTEIRA
+    </span>
+  </div>
+
+  {(() => {
+    const aba = abasPotencialV4.find(a => a.id === "carteira");
+    const produto = aba?.produtos.find(
+      p => !p.play && !p.jaCompra && p.clientes > 0
+    );
+
+    if (!produto) {
+      return (
+        <p className="pm7-warning">
+          Nenhuma nova oportunidade identificada na carteira.
+        </p>
+      );
+    }
+
+    const nivel =
+      produto.percentual >= 60 ? "ALTO" :
+      produto.percentual >= 35 ? "MÉDIO" : "BAIXO";
+
+    return (
+      <article className="pm7-card">
+        <div className="pm7-card-header">
+          <div className="pm7-card-title">
+            <h4>{produto.linha}</h4>
+            <span className="pm7-code">
+              Cód. {produto.codigoLinha}
+            </span>
           </div>
-          <div style={styles.preditivaIcone}>✦</div>
-        </section>
+
+          <span className={
+            "pm7-badge " +
+            (nivel === "ALTO"
+              ? "pm7-alto"
+              : nivel === "MÉDIO"
+              ? "pm7-medio"
+              : "pm7-baixo")
+          }>
+            {nivel}
+          </span>
+        </div>
+
+        <div className="pm7-percent">
+          {produto.percentual.toFixed(0)}%
+        </div>
+
+        <p className="pm7-explanation">
+          {produto.clientes} de {aba?.amostra ?? 0} clientes
+          da amostra compram esta linha.
+          Oportunidade de ampliar o mix do cliente.
+        </p>
+
+        <div className="pm7-metrics">
+          <div>
+            <span>Clientes</span>
+            <strong>{numero(produto.clientes)}</strong>
+          </div>
+          <div>
+            <span>Mediana pares</span>
+            <strong>{numero(produto.medianaPares)}</strong>
+          </div>
+          <div>
+            <span>Mediana valor</span>
+            <strong>{moeda(produto.medianaValor)}</strong>
+          </div>
+        </div>
+
+        <div className="pm7-references">
+          <span>
+            Referências autorizadas com venda no histórico:
+          </span>
+          <strong>
+            {produto.referencias.length
+              ? produto.referencias.join(" • ")
+              : "Nenhuma referência encontrada na amostra."}
+          </strong>
+        </div>
+      </article>
+    );
+  })()}
+</section>
         </>}
 
 
@@ -2568,31 +2668,36 @@ const styles: Record<string, React.CSSProperties> = {
   },
 
   preditiva: {
-    background:
-      "linear-gradient(135deg,#d86c00,#ff9514)",
-    color: "white",
-    borderRadius: "20px",
-    padding: "27px 30px",
+    background: "#fffdfb",
+    color: "#33220e",
+    border: "1px solid #efbb7d",
+    borderRadius: "13px",
+    padding: "20px",
     display: "flex",
     alignItems: "center",
     justifyContent: "space-between",
-    gap: "20px",
+    gap: "16px",
+    marginTop: "12px",
   },
 
   preditivaTitulo: {
     margin: "0 0 8px",
-    fontSize: "25px",
+    fontSize: "18px",
+    fontWeight: 900,
+    color: "#33220e",
   },
 
   preditivaTexto: {
     margin: 0,
-    maxWidth: "700px",
+    maxWidth: "100%",
     lineHeight: 1.5,
-    opacity: 0.92,
+    fontSize: "12px",
+    color: "#79522d",
   },
 
   preditivaIcone: {
-    fontSize: "45px",
+    fontSize: "32px",
+    color: "#ed7900",
   },
 
   erroPage: {

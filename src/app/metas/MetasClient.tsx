@@ -288,6 +288,32 @@ function CaixaAgua({
     </article>
   );
 }
+
+// KIDY_METAS_MENSAL_LAYOUT_V2: realiza mensalmente a leitura da mesma API da Campanha.
+type KIDYIndicadorCampanha = {chave:string;metaPares:number|string;metaValor:number|string;realizadoPares:number|string|null;realizadoValor:number|string|null};
+type KIDYRespostaCampanha = {filtros:{supervisores:string[];representantes:Array<{codigo:string;nome:string}>};indicadores:KIDYIndicadorCampanha[]};
+function adaptarCampanhaMetas(fonte:KIDYRespostaCampanha,tipo:string,regional:string,representante:string,competencia:string):Resposta {
+  const chaves = tipo === 'ENTRADA_GERAL' ? ['PRODUCAO','KIDEX'] : [tipo];
+  const itens=chaves.map(chave=>{
+    const i=fonte.indicadores.find(x=>x.chave===chave);
+    if(!i)throw Error('Indicador ausente da Campanha: '+chave);
+    return i;
+  });
+  const soma=(campo:'metaPares'|'metaValor'|'realizadoPares'|'realizadoValor')=>itens.reduce((n,i)=>n+Number(i[campo]??0),0);
+  const fazer=(meta:number,realizado:number):Indicador=>({meta,realizado,diferenca:realizado-meta,faltante:Math.max(0,meta-realizado),percentual:meta>0?100*realizado/meta:0,realizadoAA:null});
+  const [ano,mes] = competencia.split('-').map(Number);
+  const fim=new Date(Date.UTC(ano,mes,0)).toISOString().slice(0,10);
+  return {
+    tipo,periodicidade:'MENSAL',
+    filtros:{regional,representante,regionais:(fonte.filtros?.supervisores||[]).map(codigo=>({codigo,nome:codigo})),representantes:(fonte.filtros?.representantes||[]).map(r=>({...r,regional}))},
+    periodo:{inicio:competencia,fim,original:'Realizados oficiais — mês completo: '+competencia.slice(5,7)+'/'+competencia.slice(0,4)},
+    indicadores:{pares:fazer(soma('metaPares'),soma('realizadoPares')),valores:fazer(soma('metaValor'),soma('realizadoValor'))},
+    comparabilidade:{validada:false,escopo:'CAMPANHA_MENSAL',supervisores:[],possuiExclusoes:false},
+    conciliacao:{representantesComMeta:0,representantesNoRealizado:0,representantesConciliados:0,representantesSemRealizado:[],representantesSemMeta:[]},
+    avisos:['Mes completo conforme as cargas mensais oficiais da Campanha.','Comparativo AA indisponivel nesta fonte.'],
+  };
+}
+
 export default function MetasClient() {
   const [tipo, setTipo] = useState("FATURAMENTO");
   const [periodicidade, setPeriodicidade] = useState("MENSAL");
@@ -309,6 +335,17 @@ export default function MetasClient() {
       setDados(null);
 
       try {
+        if (periodicidade === "MENSAL") {
+          const competencia = "2026-11-01";
+          const parametrosCampanha = new URLSearchParams({competencia,supervisor:regional,representante});
+          const response = await fetch('/api/campanha?'+parametrosCampanha.toString(),{credentials:'same-origin',cache:'no-store',signal:controller.signal});
+          const json = await response.json();
+          if(!response.ok)throw Error(json.erro||'Falha ao consultar realizados mensais');
+          const resultado=adaptarCampanhaMetas(json as KIDYRespostaCampanha,tipo,regional,representante,competencia);
+          if(!controller.signal.aborted){setDados(resultado);setRegionais(resultado.filtros.regionais);setRepresentantes(resultado.filtros.representantes);}
+          return;
+        }
+        if(tipo==='PRODUCAO'||tipo==='ENTRADA_GERAL')throw Error('Este indicador esta disponivel na visao mensal.');
         const parametros = new URLSearchParams({
           tipo,
           periodicidade,
@@ -366,11 +403,12 @@ export default function MetasClient() {
           <select
             id="tipo-meta"
             value={tipo}
-            onChange={(event) => setTipo(event.target.value)}
+            onChange={(event) => {setTipo(event.target.value);if(event.target.value==='PRODUCAO'||event.target.value==='ENTRADA_GERAL')setPeriodicidade('MENSAL');}}
           >
             <option value="FATURAMENTO">Faturamento</option>
-            <option value="ENTRADA">Entrada de pedidos</option>
-            <option value="KIDEX">KIDEX</option>
+            <option value="PRODUCAO">Entrada Produção</option>
+            <option value="KIDEX">Entrada KIDEX</option>
+            <option value="ENTRADA_GERAL">Entrada Geral</option>
           </select>
         </div>
 
@@ -382,7 +420,7 @@ export default function MetasClient() {
             onChange={(event) => setPeriodicidade(event.target.value)}
           >
             <option value="MENSAL">Mensal</option>
-            <option value="SEMANAL">Semanal</option>
+            <option value="SEMANAL" disabled={tipo==='PRODUCAO'||tipo==='ENTRADA_GERAL'}>Semanal</option>
           </select>
         </div>
         <div>
@@ -422,7 +460,7 @@ export default function MetasClient() {
         </div>
       </div>
 
-      {tipo === "KIDEX" && (
+      {tipo === "KIDEX" && periodicidade === "SEMANAL" && (
         <div className={styles.kidexSwitch}>
           <label htmlFor="visao-kidex">Visão KIDEX (somente pedido tipo 4)</label>
           <select id="visao-kidex" value={visaoKidex} onChange={(event) => setVisaoKidex(event.target.value)}>
@@ -446,7 +484,7 @@ export default function MetasClient() {
             <strong>
               {tipo === "KIDEX"
                 ? visaoKidex === "CADASTRO" ? "Entrada KIDEX" : "Venda para Faturamento Dentro do Mês"
-                : tipo === "FATURAMENTO" ? "Faturamento" : "Entrada de pedidos"}
+                : tipo === "FATURAMENTO" ? "Faturamento" : tipo === "PRODUCAO" ? "Entrada Produção" : tipo === "ENTRADA_GERAL" ? "Entrada Geral" : "Entrada de pedidos"}
               {" — "}
               {periodicidade === "MENSAL" ? "Mensal" : "Semanal"}
             </strong>

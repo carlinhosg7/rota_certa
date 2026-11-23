@@ -630,6 +630,9 @@ export default async function VisaoGrupos({ searchParams }: Props) {
     linha: string;
     referencia: string;
     numeroPedido: string;
+    limiteAprovado: number | null;
+    limiteCredito: number | null;
+    limiteDisponivel: number | null;
   }[] = [];
 
   if (grupoAtual && !erro) {
@@ -654,6 +657,9 @@ export default async function VisaoGrupos({ searchParams }: Props) {
         linha: texto(v.linha),
         referencia: texto(v.referencia),
         numeroPedido: texto(v.numeroPedido),
+        limiteAprovado: v.limiteAprovado,
+        limiteCredito: v.limiteCredito,
+        limiteDisponivel: v.limiteDisponivel,
       }));
   }
 
@@ -668,6 +674,81 @@ export default async function VisaoGrupos({ searchParams }: Props) {
     (s, c) => s + (Number(c.limiteDisponivel) || 0), 0
   );
 
+  // Consolidacao financeira das lojas do grupo.
+  type CampoLimiteGrupo =
+    | "limiteAprovado"
+    | "limiteCredito"
+    | "limiteDisponivel";
+
+  const lojasGrupoUnicas = [
+    ...new Map<string, Cliente>(
+      empresas.map(c => [
+        cleanCode(codigo(c.codigoCliente)),
+        c
+      ] as [string, Cliente])
+    ).entries()
+  ].filter(([cod]) => Boolean(cod));
+
+  const vendasPorLojaFinanceiro = new Map<string, typeof vendasGrupo>();
+
+  for (const venda of vendasGrupo) {
+    const registros = vendasPorLojaFinanceiro.get(venda.codigo) ?? [];
+    registros.push(venda);
+    vendasPorLojaFinanceiro.set(venda.codigo, registros);
+  }
+
+  for (const registros of vendasPorLojaFinanceiro.values()) {
+    registros.sort((a, b) => {
+      const dataA = (a.dataEntrega ?? a.data)?.getTime() ?? 0;
+      const dataB = (b.dataEntrega ?? b.data)?.getTime() ?? 0;
+      return dataB - dataA;
+    });
+  }
+
+  const calcularLimiteGrupo = (campo: CampoLimiteGrupo) => {
+    let total = 0;
+    let informadas = 0;
+
+    for (const [cod, cadastro] of lojasGrupoUnicas) {
+      let valor: number | null = null;
+
+      for (const venda of vendasPorLojaFinanceiro.get(cod) ?? []) {
+        const encontrado = venda[campo];
+
+        if (encontrado !== null && Number.isFinite(encontrado)) {
+          valor = encontrado;
+          break;
+        }
+      }
+
+      // Fonte cadastral usada apenas como alternativa
+      // para o limite disponivel quando nao ha historico.
+      if (
+        valor === null &&
+        campo === "limiteDisponivel" &&
+        Number(cadastro.limiteDisponivel) > 0
+      ) {
+        valor = Number(cadastro.limiteDisponivel);
+      }
+
+      if (valor !== null) {
+        total += valor;
+        informadas++;
+      }
+    }
+
+    return { total, informadas };
+  };
+
+  const limiteAprovadoGrupo = calcularLimiteGrupo("limiteAprovado");
+  const limiteCreditoGrupo = calcularLimiteGrupo("limiteCredito");
+  const limiteDisponivelGrupo = calcularLimiteGrupo("limiteDisponivel");
+
+  const valorLimiteGrupo = (r: {total: number; informadas: number}) =>
+    r.informadas > 0 ? moeda(r.total) : "Não informado";
+
+  const detalheLimiteGrupo = (r: {informadas: number}) =>
+    `${numero(r.informadas)} de ${numero(lojasGrupoUnicas.length)} lojas com informação`;
   const hoje = new Date();
   const inicioAno = new Date(hoje.getFullYear(), 0, 1);
 
@@ -1311,7 +1392,76 @@ export default async function VisaoGrupos({ searchParams }: Props) {
                   detalhe={`Limite somado: ${moeda(limiteTotal)}`}
                 />
 </Link>
-              </div>
+                               <div style={{
+  gridColumn: "1 / -1",
+  display: "grid",
+  gridTemplateColumns: "repeat(auto-fit, minmax(min(100%, 280px), 1fr))",
+  gap: 14,
+  marginTop: 10
+}}>
+  {[
+    {
+      titulo: "LIMITE APROVADO",
+      resultado: limiteAprovadoGrupo,
+      destaque: false
+    },
+    {
+      titulo: "LIMITE DE CRÉDITO",
+      resultado: limiteCreditoGrupo,
+      destaque: false
+    },
+    {
+      titulo: "LIMITE DISPONÍVEL",
+      resultado: limiteDisponivelGrupo,
+      destaque: true
+    }
+  ].map(item => (
+    <div
+      key={item.titulo}
+      style={{
+        background: item.destaque
+          ? "linear-gradient(135deg, #fff2df, #fffaf2)"
+          : "#fffdf9",
+        border: item.destaque
+          ? "2px solid #f28c00"
+          : "1px solid #f0c88f",
+        borderRadius: 16,
+        padding: "20px 22px",
+        minWidth: 0,
+        boxSizing: "border-box"
+      }}
+    >
+      <div style={{
+        fontSize: 11,
+        fontWeight: 900,
+        color: "#a45a14",
+        letterSpacing: 1,
+        marginBottom: 13
+      }}>
+        {item.titulo}
+      </div>
+
+      <div style={{
+        fontSize: "clamp(18px, 2vw, 25px)",
+        fontWeight: 900,
+        color: item.destaque ? "#d86c00" : "#3d2300",
+        whiteSpace: "nowrap",
+        letterSpacing: "-0.5px"
+      }}>
+        {valorLimiteGrupo(item.resultado)}
+      </div>
+
+      <div style={{
+        fontSize: 12,
+        color: "#986c3f",
+        marginTop: 10
+      }}>
+        {detalheLimiteGrupo(item.resultado)}
+      </div>
+    </div>
+  ))}
+</div>
+               </div>
 
               <section id="lista-grupos" style={painel}>
                 <TituloSecao

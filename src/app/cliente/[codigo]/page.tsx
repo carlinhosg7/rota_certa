@@ -3,7 +3,7 @@ import {
   buscarVendasClientes360,
   buscarPerfis360,
 } from "@/lib/visao360-supabase";
-import { normalizarRepresentante } from "@/lib/representantes-oficiais";
+import { carregarMapaRepresentantes, normalizarRepresentante } from "@/lib/representantes-oficiais";
 import type { Venda } from "@/lib/comercial-data";
 import { calcularPrioridadeCliente } from "@/lib/prioridade-cliente";
 import { obterPrioridade } from "@/lib/prioridade-cliente-db";
@@ -98,39 +98,46 @@ export default async function ClientePage({ params }: Props) {
     }
 
     if (perfil === "REPRESENTANTE" || perfil === "REP") {
-      // Comparacao por codigo comercial normalizado.
-      // Nao autorizar por regional nem por historico.
-      const normalizarCodigoAcesso = (valor: unknown) =>
-        String(valor ?? "")
-          .trim()
-          .replace(/\\.0+$/, "")
-          .replace(/^0+(?=\\d)/, "");
+      // Mesma regra de autorizacao da Carteira 2027.
+      // Utiliza somente o representante autenticado e seu De/Para oficial.
+      const mapaAcesso360 = await carregarMapaRepresentantes();
 
-      const reps = await representantesPermitidos(usuario);
-
-      const autorizados = new Set(
-        (reps ?? [])
-          .map(normalizarCodigoAcesso)
-          .filter(Boolean)
+      const repLogin360 = cleanCode(
+        usuario.codigo_representante || usuario.usuario || ""
       );
 
-      const vinculados = (
-        cadastro.representanteAtual ?? []
-      ).map(r => normalizarCodigoAcesso(r.codigo));
+      const repAtual360 = normalizarRepresentante(
+        repLogin360,
+        mapaAcesso360
+      ).codigo;
 
-      const autorizado = vinculados.some(
-        codigoRep => autorizados.has(codigoRep)
+      const cadastroRep360 = mapaAcesso360.cadastro.get(repAtual360);
+      const autorizados360 = new Set<string>();
+
+      if (cadastroRep360?.ativo) {
+        autorizados360.add(repAtual360);
+
+        for (const [antigo, atual] of mapaAcesso360.dePara) {
+          if (atual === repAtual360) {
+            autorizados360.add(antigo);
+          }
+        }
+      }
+
+      const vinculos360 = cadastro.representantes ?? [];
+
+      const autorizado360 = vinculos360.some(vinculo =>
+        autorizados360.has(cleanCode(vinculo.codigo))
       );
 
-      if (!autorizado) {
+      if (!autorizado360) {
         console.warn("[ACESSO 360 NEGADO]", {
           codigoCliente: codigoLimpo,
           perfil,
-          representantesSessao: [...autorizados],
-          representantesCliente: vinculados,
-          motivo: autorizados.size
-            ? "SEM_VINCULO_COM_REPRESENTANTE"
-            : "SESSAO_SEM_CODIGO_REPRESENTANTE",
+          repLogin: repLogin360,
+          repOficial: repAtual360,
+          vinculosCliente: vinculos360.map(r => cleanCode(r.codigo)),
+          motivo: "SEM_VINCULO_AUTORIZADO_CARTEIRA_2027"
         });
 
         notFound();
@@ -1049,7 +1056,8 @@ const janelaComercial = await calcularJanelaCompraFaturamento(
     .filter((r) =>
       r.diasSemCompra !== null &&
       r.diasSemCompra > 90 &&
-      r.diasSemCompra <= 180
+      r.diasSemCompra <= 180 &&
+    refsAtivas360.has(r.referenciaNormalizada)
     )
     .sort((a, b) => (b.diasSemCompra || 0) - (a.diasSemCompra || 0));
 

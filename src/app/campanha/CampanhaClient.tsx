@@ -8,7 +8,7 @@ type Indicador = {
   metaPares: number; metaValor: number;
   realizadoPares: number | null; realizadoValor: number | null;
   percentualPares: number | null; percentualValor: number | null;
-  status: string; pontosConcedidos: number;
+  status: string; pontosConcedidos: number; pontosProjetados?: number;
 };
 type OpcaoRep = { codigo: string; nome: string };
 type Retorno = {
@@ -38,6 +38,86 @@ const brl = new Intl.NumberFormat("pt-BR", { style: "currency", currency: "BRL",
 const qtd = new Intl.NumberFormat("pt-BR", { maximumFractionDigits: 2 });
 const pares = new Intl.NumberFormat("pt-BR", { maximumFractionDigits: 0 });
 
+function BarraAtingimento({
+  percentual
+}: {
+  percentual: number | null | undefined;
+}) {
+  const informado =
+    typeof percentual === "number" &&
+    Number.isFinite(percentual);
+
+  const valor = informado ? Math.max(0, percentual) : 0;
+  const largura = Math.min(valor, 100);
+
+  const cor = !informado
+    ? "#cbd5e1"
+    : valor >= 100
+      ? "#168548"
+      : valor >= 70
+        ? "#f28c00"
+        : "#e66a16";
+
+  return (
+    <div style={{
+      display: "grid",
+      gap: 6,
+      padding: "9px 10px",
+      borderRadius: 9,
+      background: informado ? "#fff8ee" : "#f4f6f8",
+      border: "1px solid #e5e7eb"
+    }}>
+      <div style={{
+        display: "flex",
+        justifyContent: "space-between",
+        alignItems: "center",
+        gap: 6,
+        flexWrap: "wrap"
+      }}>
+        <span style={{
+          fontSize: 10,
+          color: "#64748b",
+          fontWeight: 700
+        }}>
+          {!informado
+            ? "Aguardando"
+            : valor >= 100
+              ? "Meta atingida"
+              : "Atingimento"}
+        </span>
+
+        <strong style={{
+          fontSize: 14,
+          fontWeight: 900,
+          color: informado ? cor : "#94a3b8"
+        }}>
+          {informado ? `${qtd.format(valor)}%` : "—"}
+        </strong>
+      </div>
+
+      <div
+        role={informado ? "progressbar" : undefined}
+        aria-label="Atingimento da meta"
+        aria-valuemin={informado ? 0 : undefined}
+        aria-valuemax={informado ? 100 : undefined}
+        aria-valuenow={informado ? largura : undefined}
+        style={{
+          height: 8,
+          background: "#e2e8f0",
+          borderRadius: 10,
+          overflow: "hidden"
+        }}
+      >
+        <div style={{
+          height: "100%",
+          width: `${largura}%`,
+          background: cor,
+          borderRadius: 10
+        }} />
+      </div>
+    </div>
+  );
+}
 function Caixa({ nome, pontos, maximo, homologado, previa = false, geral = false }: {
   nome: string; pontos: number; maximo: number; homologado: boolean; previa?: boolean; geral?: boolean;
 }) {
@@ -61,7 +141,11 @@ function Caixa({ nome, pontos, maximo, homologado, previa = false, geral = false
   );
 }
 
-export default function CampanhaClient() {
+export default function CampanhaClient({
+  podeVerPainelGerencial
+}: {
+  podeVerPainelGerencial: boolean;
+}) {
   const [supervisor, setSupervisor] = useState("");
   const [representante, setRepresentante] = useState("");
   const [dados, setDados] = useState<Record<string, Retorno>>({});
@@ -105,34 +189,90 @@ export default function CampanhaClient() {
   // Comercial: proporcao do valor realizado/meta, limitada a 100% da categoria.
   // Treinamentos: somente aprovados, no maximo 30 pontos.
   // Reativacao: nao pontuar enquanto constar DETECTADO_NAO_HOMOLOGADO.
+  // REGRA DA CAMPANHA: 100% DA META = PONTOS INTEGRAIS.
+  // Abaixo de 100% = ZERO. Sem meta/realizado = pendente.
+  // Este painel usa indicadores consolidados.
+  // A pontuacao individual e calculada na API de projecao.
   const situacaoMes = (chave: string) => {
     const resposta = dados[chave];
-    if (!resposta) return { homologado: false, previa: false, pontos: 0 };
+
+    if (!resposta) {
+      return { homologado: false, previa: false, pontos: 0 };
+    }
+
     let soma = 0;
     let possuiDados = false;
-    for (const ind of resposta.indicadores) {
-      if (["PRODUCAO", "FATURAMENTO", "KIDEX"].includes(ind.chave)) {
-        if (ind.metaValor > 0 && ind.realizadoValor !== null) {
+
+    for (const indicador of resposta.indicadores) {
+      if (
+        ["PRODUCAO", "FATURAMENTO", "KIDEX"].includes(indicador.chave)
+      ) {
+        if (
+          indicador.metaValor > 0 &&
+          indicador.realizadoValor !== null
+        ) {
           possuiDados = true;
-          const fracao = Math.max(0, Math.min(1, ind.realizadoValor / ind.metaValor));
-          soma += fracao * ind.pontos;
+
+          // Nao arredondar o percentual antes de comparar.
+          if (indicador.realizadoValor >= indicador.metaValor) {
+            soma += indicador.pontos;
+          }
         }
-      } else if (ind.chave === "TREINAMENTOS" && ind.status === "HOMOLOGADO_PARCIAL") {
-        if (ind.metaPares > 0 && ind.realizadoPares !== null && ind.realizadoPares > 0) {
+      } else if (
+        indicador.chave === "TREINAMENTOS" &&
+        indicador.status === "HOMOLOGADO_PARCIAL"
+      ) {
+        if (
+          indicador.metaPares > 0 &&
+          indicador.realizadoPares !== null
+        ) {
           possuiDados = true;
-          soma += Math.max(0, Math.min(1, ind.realizadoPares / ind.metaPares)) * 30;
+
+          if (indicador.realizadoPares >= indicador.metaPares) {
+            soma += indicador.pontos;
+          }
         }
       }
     }
+
+
+    // Incluir os 30 pontos conquistados ao atingir
+    // a meta individual de reativacao.
+    // Enquanto nao homologados, fazem parte da previa.
+    const reativacao = resposta.indicadores.find(
+      i => i.chave === "REATIVACAO"
+    );
+
+    const pontosReativacao =
+      reativacao?.pontosProjetados ?? 0;
+
+    if (pontosReativacao > 0) {
+      possuiDados = true;
+      soma += pontosReativacao;
+    }
+
     return {
       homologado: Boolean(resposta.pontuacao.disponivel),
       previa: possuiDados && !resposta.pontuacao.disponivel,
-      pontos: resposta.pontuacao.disponivel ? resposta.pontuacao.concedida : Math.round(soma * 100) / 100,
+      pontos: resposta.pontuacao.disponivel
+        ? resposta.pontuacao.concedida
+        : soma
     };
   };
-
   const geralHomologado = MESES.every(m => Boolean(dados[m.chave]?.pontuacao.disponivel));
   const geralPontos = MESES.reduce((t,m) => t + situacaoMes(m.chave).pontos, 0);
+  // Faixas oficiais da campanha: nao ha beneficio proporcional.
+  const percentualAmostra =
+    geralPontos >= 1200 ? 100 :
+    geralPontos >= 900 ? 75 :
+    geralPontos >= 600 ? 50 :
+    geralPontos >= 300 ? 25 : 0;
+
+  const pontosProximaFaixa =
+    geralPontos < 300 ? 300 :
+    geralPontos < 600 ? 600 :
+    geralPontos < 900 ? 900 :
+    geralPontos < 1200 ? 1200 : null;
   const geralPrevia = MESES.some(m => situacaoMes(m.chave).previa);
   const mesesComMetas = MESES.filter(m => dados[m.chave]?.indicadores.some(i=>i.representantes>0)).length;
 
@@ -141,6 +281,7 @@ export default function CampanhaClient() {
       <a href="/campanha/projecao" style={{ display: "inline-block", padding: "10px 16px", borderRadius: 9, background: "#173d5d", color: "#fff", textDecoration: "none", fontWeight: 700 }}>Pontuação por representante e supervisor</a>
       <span style={{ fontSize: 12, color: "#697b8f" }}>Projeção comercial · não homologada</span>
     </nav>
+    {podeVerPainelGerencial && (
     <section className={styles.headerPanel}>
       <div className={styles.headerCopy}>
         <span className={styles.eyebrow}>PAINEL GERENCIAL · 09/11/2026 — 30/04/2027</span>
@@ -162,6 +303,7 @@ export default function CampanhaClient() {
         </label>
       </div>
     </section>
+    )}
 
     {carregando && <div className={styles.notice} role="status">Consultando os seis meses no Supabase...</div>}
     {erro && <div className={styles.error} role="alert">{erro}</div>}
@@ -169,18 +311,81 @@ export default function CampanhaClient() {
       <section className={styles.topArea} aria-label="Caixas d'agua da campanha">
         <Caixa nome="Campanha geral" pontos={geralPontos} maximo={MESES.length * 200} homologado={geralHomologado} previa={geralPrevia} geral />
         <div className={styles.topSummary}>
+          <div style={{
+            gridColumn: "1 / -1",
+            padding: 15,
+            borderRadius: 12,
+            background: "linear-gradient(115deg,#fff7ed,#ffffff)",
+            border: "1px solid #fed7aa",
+            display: "grid",
+            gap: 10
+          }}>
+            <span style={{
+              fontWeight: 800,
+              color: "#92400e",
+              fontSize: 12
+            }}>
+              🎁 Amostra conquistada
+            </span>
+
+            <strong style={{
+              fontSize: 32,
+              color: percentualAmostra === 100 ? "#15803d" : "#ea580c"
+            }}>
+              {percentualAmostra}%
+              <small style={{
+                marginLeft: 9,
+                fontSize: 12,
+                color: "#64748b"
+              }}>
+                da amostra
+              </small>
+            </strong>
+
+            <div style={{
+              height: 12,
+              background: "#ffedd5",
+              borderRadius: 20,
+              overflow: "hidden"
+            }}>
+              <div style={{
+                height: "100%",
+                width: `${percentualAmostra}%`,
+                borderRadius: 20,
+                background: percentualAmostra === 100
+                  ? "#16a34a"
+                  : "#f97316",
+                transition: "width .3s ease"
+              }} />
+            </div>
+
+            <span style={{
+              fontSize: 12,
+              color: "#475569"
+            }}>
+              {pontosProximaFaixa === null
+                ? "Faixa maxima de 1.200 pontos atingida."
+                : `Faltam ${qtd.format(
+                    pontosProximaFaixa - geralPontos
+                  )} pontos para a proxima faixa.`}
+            </span>
+
+            <span style={{
+              fontSize: 10,
+              color: "#92400e"
+            }}>
+              {geralHomologado
+                ? "Pontuacao homologada."
+                : "Previa baseada na pontuacao exibida. Beneficio ainda nao homologado."}
+            </span>
+          </div>
           <div><span>Competências com metas</span><strong>{mesesComMetas} <small>/ {MESES.length}</small></strong></div>
           <div><span>Pontuação máxima</span><strong>{qtd.format(MESES.length * 200)} <small>pontos</small></strong></div>
-          <p>As caixas exibem uma projeção proporcional do atingimento; não representam pontos de premiação concedidos.</p>
+          <p>Pontuação integral somente ao atingir 100% da meta. Prévia consolidada não equivale à premiação individual homologada.</p>
         </div>
       </section>
 
-      <section className={styles.section}>
-        <div className={styles.sectionHeading}><h3>Caixas d’água por mês</h3><span>Até 200 pontos por mês</span></div>
-        <div className={styles.tanksRow}>
-          {MESES.map(m => <Caixa key={m.chave} nome={m.titulo} pontos={situacaoMes(m.chave).pontos} maximo={200} homologado={situacaoMes(m.chave).homologado} previa={situacaoMes(m.chave).previa} />)}
-        </div>
-      </section>
+
 
       <section className={styles.section}>
         <div className={styles.sectionHeading}>
@@ -195,7 +400,7 @@ export default function CampanhaClient() {
                 const registros = MESES.map(m => ind(m.chave, tipo.chave));
                 const quantidade = tipo.chave === "TREINAMENTOS" || tipo.chave === "REATIVACAO";
                 const unidadeQuantidade = tipo.chave === "REATIVACAO" ? "clientes" : "treinamentos";
-                const tituloRealizado = tipo.chave === "REATIVACAO" ? "Reativados" : "Homologados";
+                const tituloRealizado = tipo.chave === "REATIVACAO" ? "Detectados" : "Homologados";
                 const metaValorTotal = registros.reduce((t,i) => t+(i?.metaValor ?? 0),0);
                 const metaParesTotal = registros.reduce((t,i) => t+(i?.metaPares ?? 0),0);
                 const comRealizados = registros.some(i => i && i.realizadoValor !== null && i.realizadoPares !== null);
@@ -210,13 +415,13 @@ export default function CampanhaClient() {
                     const i = ind(m.chave, tipo.chave);
                     return <td key={m.chave}>
                       {!i ? <span className={styles.missing}>{tipo.chave === "TREINAMENTOS" || tipo.chave === "REATIVACAO" ? "Integração pendente" : "Sem meta cadastrada"}</span> :
-                        quantidade ? <div className={styles.cell}>
+                        quantidade ? <div className={styles.cell}><BarraAtingimento percentual={i.percentualPares} />
                           <span className={styles.cellLine}><small>Meta</small><strong>{`${pares.format(i.metaPares)} ${unidadeQuantidade}`}</strong></span>
                           {detalhes && <span className={styles.cellLine}><small>Representantes</small><span>{tipo.chave === "REATIVACAO" ? qtd.format(i.representantes) : `${qtd.format(i.representantes)} × 5`}</span></span>}
                           <span className={styles.cellLine}><small>{tituloRealizado}</small><strong>{i.realizadoPares === null ? "Aguardando" : qtd.format(i.realizadoPares)}</strong></span>
                           {detalhes && <span className={styles.cellLine}><small>Atingimento</small><span>{i.percentualPares === null ? "—" : `${qtd.format(i.percentualPares)}%`}</span></span>}
-                          <span className={styles.cellState}>{tipo.chave === "REATIVACAO" ? "Reativações detectadas na Carteira 02 → 01 · pontos não homologados" : `Pontos da equipe: ${qtd.format(i.pontosConcedidos)} / ${qtd.format(i.representantes * 30)} · até 30 por representante`}</span>
-                        </div> : <div className={styles.cell}>
+                          <span className={styles.cellState}>{tipo.chave === "REATIVACAO" ? `Pontos conquistados: ${qtd.format(i.pontosProjetados ?? 0)} · homologados: ${qtd.format(i.pontosConcedidos)} · ${i.status === "DETECTADO_NAO_HOMOLOGADO" ? "validação pendente" : i.status}` : `Pontos da equipe: ${qtd.format(i.pontosConcedidos)} / ${qtd.format(i.representantes * 30)} · até 30 por representante`}</span>
+                        </div> : <div className={styles.cell}><BarraAtingimento percentual={i.percentualValor} />
                           <span className={styles.cellLine}><small>Meta R$</small><strong>{brl.format(i.metaValor)}</strong></span>
                           {detalhes && <span className={styles.cellLine}><small>Meta pares</small><span>{pares.format(i.metaPares)}</span></span>}
                           <span className={styles.cellLine}><small>Realizado</small><span>{i.realizadoValor === null ? "Aguardando" : brl.format(i.realizadoValor)}</span></span>
@@ -227,10 +432,24 @@ export default function CampanhaClient() {
                   })}
                   <td className={styles.totalCell}>
                     {registros.every(i => !i) ? <span className={styles.missing}>Pendente</span> : quantidade ? <div className={styles.cell}>
+  <BarraAtingimento
+    percentual={
+      metaParesTotal > 0 && realizadoQtdTotal !== null
+        ? realizadoQtdTotal / metaParesTotal * 100
+        : null
+    }
+  />
                       <span className={styles.cellLine}><small>Meta</small><strong>{`${pares.format(metaParesTotal)} ${unidadeQuantidade}`}</strong></span>
                       <span className={styles.cellLine}><small>{tituloRealizado}</small><strong>{realizadoQtdTotal === null ? "Aguardando" : qtd.format(realizadoQtdTotal)}</strong></span>
-                      <span className={styles.cellState}>{tipo.chave === "REATIVACAO" ? "Histórico preservado · pontos não homologados" : `Pontos da equipe: ${qtd.format(pontosTotal)} / ${qtd.format(pontosMaximosEquipe)} · até 180 por representante nos seis meses`}</span>
+                      <span className={styles.cellState}>{tipo.chave === "REATIVACAO" ? `Pontos conquistados: ${qtd.format(registros.reduce((s, x) => s + (x?.pontosProjetados ?? 0), 0))} · homologados: ${qtd.format(pontosTotal)}` : `Pontos da equipe: ${qtd.format(pontosTotal)} / ${qtd.format(pontosMaximosEquipe)} · até 180 por representante nos seis meses`}</span>
                     </div> : <div className={styles.cell}>
+  <BarraAtingimento
+    percentual={
+      metaValorTotal > 0 && realizadoTotal !== null
+        ? realizadoTotal / metaValorTotal * 100
+        : null
+    }
+  />
                       <span className={styles.cellLine}><small>Meta R$</small><strong>{brl.format(metaValorTotal)}</strong></span>
                       {detalhes && <span className={styles.cellLine}><small>Meta pares</small><span>{pares.format(metaParesTotal)}</span></span>}
                       <span className={styles.cellLine}><small>Realizado</small><span>{realizadoTotal === null ? "Aguardando" : brl.format(realizadoTotal)}</span></span>

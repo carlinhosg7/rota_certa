@@ -5,7 +5,7 @@ import { supabase } from "@/lib/supabase";
 import { credenciais } from "@/lib/campanha-treinamento-seguro";
 import { representantesPermitidos, regionaisPermitidas } from "@/lib/escopo-acesso";
 import { carregarMapaRepresentantes, normalizarRepresentante } from "@/lib/representantes-oficiais";
-import { metasReativacaoPorRepresentante, mesesMetaReativacao } from "@/lib/metas-reativacao-campanha";
+
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -246,6 +246,7 @@ export async function GET(request: NextRequest) {
 
       return {
         ...indicador,
+        pontosProjetados: 0,
 
         representantes: new Set(
           itensComMeta.map(
@@ -318,28 +319,39 @@ export async function GET(request: NextRequest) {
       percentualPares: qtdRepresentantes ? 100 * treinamentosValidos / (5 * qtdRepresentantes) : null,
       percentualValor: null, status: "HOMOLOGADO_PARCIAL",
       pontosConcedidos: pontosTreinamentos,
+      pontosProjetados: 0,
     });
 
-    // A campanha registra reativacoes detectadas na mudança da Carteira 02 para a 01.
-    // A data é a primeira detecção no novo snapshot, e não comprovação de compra.
-    // Apenas vinculos univocos permitem atribuir o resultado ao representante.
-    const inicioMes = competencia;
-    const fimMes = new Date(`${competencia}T12:00:00Z`);
-    fimMes.setUTCMonth(fimMes.getUTCMonth() + 1);
-    const fimExclusivo = fimMes.toISOString().slice(0, 10);
-    type Reat = {codigo_cliente:string;codigo_representante_responsavel:string|null;codigo_supervisor_responsavel:string|null};
-    const eventos:Reat[]=[];
-    for(let offset=0;offset<20000;offset+=1000){
-      const {data: lote,error: erroReat}=await supabase
-        .from("kidy_reativacao_clientes")
-        .select("codigo_cliente,codigo_representante_responsavel,codigo_supervisor_responsavel")
-        .eq("competencia","2026-10-01").eq("reativado",true)
-        .gte("data_reativacao",inicioMes).lt("data_reativacao",fimExclusivo)
-        .order("codigo_cliente",{ascending:true}).range(offset,offset+999);
-      if(erroReat)throw new Error(`Reativacao: ${erroReat.message}`);
-      eventos.push(...((lote??[]) as Reat[]));
-      if((lote??[]).length<1000)break;
+
+    // Eventos de pedidos detectados. Nao sao pontos homologados.
+    type Reat = {
+      codigo_cliente: string;
+      codigo_representante: string;
+      codigo_supervisor: string;
+      confirmado: boolean;
+    };
+
+    const eventos: Reat[] = [];
+
+    for (let offset = 0; offset < 20000; offset += 1000) {
+      const { data: lote, error: erroReat } = await supabase
+        .from("kidy_reativacao_eventos")
+        .select("codigo_cliente,codigo_representante,codigo_supervisor,confirmado")
+        .eq("competencia", competencia)
+        .order("codigo_cliente")
+        .order("codigo_representante")
+        .range(offset, offset + 999);
+
+      if (erroReat) throw new Error(
+        `Eventos de reativacao: ${erroReat.message}`
+      );
+
+      eventos.push(...((lote ?? []) as Reat[]));
+
+      if ((lote ?? []).length < 1000) break;
+      if (offset >= 19000) throw Error("Limite de eventos atingido");
     }
+
     const consultaNacional =
       permitidos === null &&
       regionais === null &&
@@ -347,39 +359,199 @@ export async function GET(request: NextRequest) {
       !supervisor;
 
     const aptos = eventos.filter(e => {
+      const rep = normalizarRepresentante(
+        cod(e.codigo_representante), mapaOficial
+      ).codigo;
+
       if (consultaNacional) return true;
 
-      const r = normalizarRepresentante(
-        cod(e.codigo_representante_responsavel),
+      const oficial = oficiais.get(rep);
+      if (!oficial) return false;
+
+      const supAtual = cod(oficial.codigo_supervisor);
+
+      return (!representante || representante === rep) &&
+        (!supervisor || supervisor === supAtual) &&
+        (permitidos === null || permitidos.includes(rep)) &&
+        (regionais === null || regionais.has(supAtual));
+    });
+
+    const clientesDetectados = new Set(
+      aptos.map(e => cod(e.codigo_cliente))
+    ).size;
+
+    // METAS OFICIAIS DE REATIVACAO - SUPABASE
+    // Excel: META REATIVICAO.xlsx
+    // Arredondamento normal ja aplicado na tabela.
+    type MetaOficial = {
+      codigo_representante: string;
+      meta_clientes: number | null;
+    };
+
+    const metasOficiais: MetaOficial[] = [];
+
+    for (let offset = 0; offset < 10000; offset += 500) {
+      const { data: lote, error: erroMeta } = await supabase
+        .from("kidy_campanha_metas_reativacao")
+        .select("codigo_representante,meta_clientes")
+        .eq("campanha", CAMPANHA)
+        .eq("competencia", competencia)
+        .order("codigo_representante")
+        .range(offset, offset + 499);
+
+      if (erroMeta) {
+        throw new Error(`Falha nas metas de reativacao: ${erroMeta.message}`);
+      }
+
+      metasOficiais.push(...((lote ?? []) as MetaOficial[]));
+
+      if ((lote ?? []).length < 500) break;
+
+      if (offset >= 9500) {
+        throw new Error("Limite de metas atingido.");
+      }
+    }
+
+
+    // Metas independentes dos realizados comerciais.
+    // Assim, os seis meses aparecem mesmo sem pedidos.
+    const codigosVisiveis = new Set(
+      cadastroVisivel
+        .filter(r =>
+          (!representante ||
+            cod(r.codigo_rep) === representante) &&
+          (!supervisor ||
+            cod(r.codigo_supervisor) === supervisor)
+        )
+        .map(r => cod(r.codigo_rep))
+        .filter(Boolean)
+    );
+
+    const metasPorRepresentante = new Map<string, number>();
+
+    for (const linha of metasOficiais) {
+      const rep = normalizarRepresentante(
+        cod(linha.codigo_representante),
         mapaOficial
       ).codigo;
 
-      const oficial = oficiais.get(r);
-      if (!oficial) return false;
+      if (!codigosVisiveis.has(rep)) continue;
 
-      const s = cod(oficial.codigo_supervisor);
+      const meta = Number(linha.meta_clientes);
 
-      return (
-        (!representante || representante === r) &&
-        (!supervisor || supervisor === s)
-      );
+      if (
+        linha.meta_clientes === null ||
+        !Number.isInteger(meta) ||
+        meta < 0
+      ) {
+        throw new Error(`Meta invalida do representante ${rep}`);
+      }
+
+      if (metasPorRepresentante.has(rep)) {
+        throw new Error(`Meta duplicada para representante ${rep}`);
+      }
+
+      metasPorRepresentante.set(rep, meta);
+    }
+
+    const codigosComMeta = [...metasPorRepresentante.keys()];
+
+    const metaReativacao = [...metasPorRepresentante.values()]
+      .reduce((total, valor) => total + valor, 0);
+
+    console.log("[CAMPANHA METAS REATIVACAO]", {
+      competencia,
+      representante,
+      supervisor,
+      representantesComMeta: codigosComMeta.length,
+      metaOficial: metaReativacao,
+      detectados: clientesDetectados
     });
-    // Metas do arquivo META REATIVICAO: 5 clientes por representante a cada mes.
-    // Escopo obtido da base da campanha ja filtrada por permissoes, sem expor metas alheias.
-    const indiceMes = mesesMetaReativacao.indexOf(competencia as typeof mesesMetaReativacao[number]);
-    const codigosVisiveis = [...new Set(visiveis.map(x => cod(x.codigo_representante)).filter(Boolean))];
-    const codigosComMeta = codigosVisiveis.filter(c => metasReativacaoPorRepresentante[c] !== undefined);
-    const metaReativacao = indiceMes >= 0
-      ? codigosComMeta.reduce((total, c) => total + (metasReativacaoPorRepresentante[c][indiceMes] ?? 0), 0)
-      : 0;
+
+
+    // Uma reativacao por codigo de cliente e representante.
+    // Os pedidos repetidos nao multiplicam pontos.
+    const clientesPorRep = new Map<string, Set<string>>();
+    const clientesConfirmadosPorRep = new Map<string, Set<string>>();
+
+    for (const evento of aptos) {
+      const rep = normalizarRepresentante(
+        cod(evento.codigo_representante),
+        mapaOficial
+      ).codigo;
+
+      if (!metasPorRepresentante.has(rep)) continue;
+
+      if (!clientesPorRep.has(rep)) {
+        clientesPorRep.set(rep, new Set<string>());
+      }
+
+      clientesPorRep.get(rep)!.add(
+        cod(evento.codigo_cliente)
+      );
+
+      if (evento.confirmado) {
+        if (!clientesConfirmadosPorRep.has(rep)) {
+          clientesConfirmadosPorRep.set(rep, new Set<string>());
+        }
+        clientesConfirmadosPorRep.get(rep)!.add(
+          cod(evento.codigo_cliente)
+        );
+      }
+    }
+
+    // 100% da meta = 30 pontos. Abaixo = zero.
+    // Nunca conceder pontos fracionados.
+    const pontosProjetadosReativacao =
+      [...metasPorRepresentante.entries()].reduce(
+        (total, [rep, meta]) => {
+          const quantidade = clientesPorRep.get(rep)?.size ?? 0;
+          return total + (
+            meta > 0 && quantidade >= meta ? 30 : 0
+          );
+        },
+        0
+      );
+
+    // Pontuacao oficial somente com eventos confirmados
+    // e competencia validada.
+    const { data: validacaoMes, error: erroValidacao } =
+      await supabase
+        .from("kidy_reativacao_competencias")
+        .select("status")
+        .eq("competencia", competencia)
+        .maybeSingle();
+
+    if (erroValidacao) {
+      throw new Error(erroValidacao.message);
+    }
+
+    const competenciaHomologada =
+      String(validacaoMes?.status ?? "").toUpperCase() ===
+      "VALIDADO";
+
+    const pontosHomologadosReativacao =
+      competenciaHomologada
+        ? [...metasPorRepresentante.entries()].reduce(
+            (total, [rep, meta]) => {
+              const quantidade =
+                clientesConfirmadosPorRep.get(rep)?.size ?? 0;
+              return total + (
+                meta > 0 && quantidade >= meta ? 30 : 0
+              );
+            },
+            0
+          )
+        : 0;
+
     indicadores.push({
       chave:"REATIVACAO",titulo:"Reativação",pontos:30,
       origem:"REATIVACAO",modalidade:"CLIENTES",
       representantes:codigosComMeta.length,
-      metaPares:metaReativacao,metaValor:0,realizadoPares:aptos.length,realizadoValor:0,
-      percentualPares:metaReativacao > 0 ? 100 * aptos.length / metaReativacao : null,
+      metaPares:metaReativacao,metaValor:0,realizadoPares:clientesDetectados,realizadoValor:0,
+      percentualPares:metaReativacao > 0 ? 100 * clientesDetectados / metaReativacao : null,
       percentualValor:null,
-      status:"DETECTADO_NAO_HOMOLOGADO",pontosConcedidos:0,
+      status:"DETECTADO_NAO_HOMOLOGADO",pontosConcedidos:pontosHomologadosReativacao,pontosProjetados:pontosProjetadosReativacao,
     });
 
     const opcoes = cadastroVisivel

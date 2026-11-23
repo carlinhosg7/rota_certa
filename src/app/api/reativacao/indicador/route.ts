@@ -38,9 +38,79 @@ export async function GET(req:NextRequest){
      (regionais===null||s.some(a=>regionais.has(a))) &&
      (!rep||r.includes(rep))&&(!sup||s.includes(sup))&&(!grupo.length||s.some(a=>grupo.includes(a)));
   });
-  const reativados=elegiveis.filter(x=>x.reativado).length;
+
+  // Eventos de compra da campanha, separados da homologacao.
+  type Evento = {
+    codigo_cliente: string;
+    codigo_representante: string;
+    codigo_supervisor: string;
+    confirmado: boolean;
+  };
+
+  const eventos: Evento[] = [];
+
+  for (let offset = 0; offset < 20000; offset += 1000) {
+    const {data, error} = await supabase
+      .from("kidy_reativacao_eventos")
+      .select("codigo_cliente,codigo_representante,codigo_supervisor,confirmado")
+      .eq("competencia", "2026-11-01")
+      .order("codigo_cliente")
+      .order("codigo_representante")
+      .range(offset, offset + 999);
+
+    if (error) throw error;
+
+    eventos.push(...((data ?? []) as Evento[]));
+
+    if ((data ?? []).length < 1000) break;
+    if (offset >= 19000) throw Error("Limite de eventos atingido");
+  }
+
+  const elegiveisPorCodigo = new Map(
+    elegiveis.map(x => [codigo(x.codigo_cliente), x])
+  );
+
+  const eventosVisiveis = eventos.filter(e => {
+    const cliente = elegiveisPorCodigo.get(codigo(e.codigo_cliente));
+    if (!cliente) return false;
+
+    const reps = codigos(cliente.representantes);
+    const sups = codigos(cliente.supervisores);
+
+    return reps.includes(codigo(e.codigo_representante)) &&
+      sups.includes(codigo(e.codigo_supervisor)) &&
+      (!rep || codigo(e.codigo_representante) === rep) &&
+      (!sup || codigo(e.codigo_supervisor) === sup) &&
+      (!grupo.length || grupo.includes(codigo(e.codigo_supervisor)));
+  });
+
+  const detectados = new Set(
+    eventosVisiveis.map(e => codigo(e.codigo_cliente))
+  ).size;
+
+  const {data: competenciaAtual, error: erroCompetencia} = await supabase
+    .from("kidy_reativacao_competencias")
+    .select("status")
+    .eq("competencia", "2026-11-01")
+    .maybeSingle();
+
+  if (erroCompetencia) throw erroCompetencia;
+
+  const competenciaValidada =
+    String(competenciaAtual?.status ?? "").toUpperCase() === "VALIDADO";
+
+  const confirmados = competenciaValidada
+    ? new Set(
+        eventosVisiveis
+          .filter(e => e.confirmado)
+          .map(e => codigo(e.codigo_cliente))
+      ).size
+    : 0;
+
+  const reativados = elegiveis.filter(x => x.reativado).length;
+
   return NextResponse.json({disponivel:true,competencia:"2026-10-01",referencia:"2026-10-27",
-   elegiveis:elegiveis.length,reativados,percentual:elegiveis.length?reativados*100/elegiveis.length:null,
+   elegiveis:elegiveis.length,reativados,detectados,confirmados,percentualDetectado:elegiveis.length?100*detectados/elegiveis.length:null,percentual:elegiveis.length?reativados*100/elegiveis.length:null,
    aviso:"Acompanhamento provisório desde 27/10/2026; reativação detectada por mudança de carteira, sem homologação."});
  }catch(e){console.error("[REATIVACAO INDICADOR]",e);return NextResponse.json({erro:"Indicador indisponível"},{status:500});}
 }

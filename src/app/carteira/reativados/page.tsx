@@ -68,12 +68,112 @@ export default async function Reativados({searchParams}:{searchParams:Promise<{s
       (regionais===null||s.some(z=>regionais.has(z)))&&
       (!rep||r.includes(rep))&&(!sup||s.includes(sup))&&(!grupo.length||s.some(z=>grupo.includes(z)));
   });
+
+  // Compras detectadas na campanha de novembro/2026.
+  type EventoDetectado = {
+    codigo_cliente: string;
+    codigo_representante: string;
+    codigo_supervisor: string;
+    data_compra: string;
+    numero_pedido: string;
+    confirmado: boolean;
+  };
+
+  const eventosDetectados: EventoDetectado[] = [];
+
+  for (let offset = 0; offset < 20000; offset += 1000) {
+    const {data, error} = await supabase
+      .from("kidy_reativacao_eventos")
+      .select("codigo_cliente,codigo_representante,codigo_supervisor,data_compra,numero_pedido,confirmado")
+      .eq("competencia", "2026-11-01")
+      .order("codigo_cliente")
+      .order("codigo_representante")
+      .range(offset, offset + 999);
+
+    if (error) throw Error("Falha ao consultar eventos da campanha");
+
+    eventosDetectados.push(...((data ?? []) as EventoDetectado[]));
+
+    if ((data ?? []).length < 1000) break;
+    if (offset >= 19000) throw Error("Limite de eventos atingido");
+  }
+
+  const detectadosVisiveis = eventosDetectados.filter(e => {
+    const r = codigo(e.codigo_representante);
+    const s = codigo(e.codigo_supervisor);
+
+    return (permitidos === null || permitidos.includes(r)) &&
+      (regionais === null || regionais.has(s)) &&
+      (!rep || rep === r) &&
+      (!sup || sup === s) &&
+      (!grupo.length || grupo.includes(s));
+  });
+
   return <div className="app-shell">
     <Sidebar nome={String(usuario.nome??"")} perfil={String(usuario.perfil??"")} usuario={String(usuario.usuario??"")} />
     <main className="content">
       <div style={{padding:24}}>
         <Link href="/carteira" style={{color:"#2563eb"}}>← Voltar à Gestão de Carteira</Link>
         <h1 style={{fontSize:24,margin:"16px 0 8px"}}>Clientes reativados</h1>
+
+        <section style={{
+          background:"#fff",
+          border:"1px solid #e2e8f0",
+          borderRadius:12,
+          padding:18,
+          marginTop:16,
+          marginBottom:20
+        }}>
+          <h2 style={{fontSize:18,marginBottom:8}}>
+            Pedidos detectados — Novembro/2026
+          </h2>
+          <p style={{fontSize:13,color:"#64748b"}}>
+            {detectadosVisiveis.length} clientes com pedidos.
+            Registros preliminares; não representam homologação.
+          </p>
+          <div style={{overflowX:"auto"}}>
+            <table style={{
+              width:"100%",
+              borderCollapse:"collapse",
+              fontSize:13
+            }}>
+              <thead>
+                <tr>
+                  {[
+                    "Cliente",
+                    "Pedido",
+                    "Data da compra",
+                    "Representante",
+                    "Supervisor",
+                    "Situação"
+                  ].map(coluna =>
+                    <th key={coluna} style={{
+                      textAlign:"left",
+                      padding:10,
+                      borderBottom:"1px solid #e2e8f0"
+                    }}>{coluna}</th>
+                  )}
+                </tr>
+              </thead>
+              <tbody>
+                {detectadosVisiveis.map(e =>
+                  <tr key={`${e.codigo_cliente}-${e.codigo_representante}`}>
+                    <td style={{padding:10}}>{e.codigo_cliente}</td>
+                    <td style={{padding:10}}>{e.numero_pedido}</td>
+                    <td style={{padding:10}}>{exibirData(e.data_compra)}</td>
+                    <td style={{padding:10}}>{e.codigo_representante}</td>
+                    <td style={{padding:10}}>{e.codigo_supervisor}</td>
+                    <td style={{padding:10}}>
+                      {e.confirmado
+                        ? "Confirmação registrada; verificar competência"
+                        : "Aguardando homologação"}
+                    </td>
+                  </tr>
+                )}
+              </tbody>
+            </table>
+          </div>
+        </section>
         <p style={{color:"#64748b",fontSize:13}}>Base histórica de 27/10/2026 · {listagem.length.toLocaleString("pt-BR")} clientes detectados · dados provisórios</p>
         <div style={{overflowX:"auto",background:"#fff",border:"1px solid #e2e8f0",borderRadius:12,marginTop:16}}>
           <table style={{width:"100%",borderCollapse:"collapse",fontSize:13,minWidth:850}}>

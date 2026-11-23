@@ -3,7 +3,7 @@
 import Link from "next/link";
 import { useEffect, useState } from "react";
 
-type Retorno = { disponivel?: boolean; reativados?: number | null; motivo?: string };
+type Retorno = { disponivel?: boolean; reativados?: number | null; detectados?: number; motivo?: string };
 export default function CartaoClientesReativados({supervisor,representante,supervisoresGrupo}:{supervisor:string;representante:string;supervisoresGrupo:string}) {
   const [dados,setDados] = useState<Retorno|null>(null);
   useEffect(()=>{
@@ -21,9 +21,9 @@ export default function CartaoClientesReativados({supervisor,representante,super
   if(supervisoresGrupo)query.set("supervisoresGrupo",supervisoresGrupo);
   return <Link href={`/carteira/reativados${query.size?`?${query}`:""}`} style={{display:"block",height:"100%",textDecoration:"none",color:"inherit"}}>
     <article style={{width:"100%",minHeight:180,boxSizing:"border-box",background:"#fff",border:"1px solid #e2e8f0",borderRadius:16,padding:18}}>
-      <div style={{fontSize:13,color:"#64748b"}}>Clientes reativados</div>
-      <div style={{fontSize:32,color:"#15803d",fontWeight:800,marginTop:8}}>{dados?.disponivel ? (dados.reativados??0).toLocaleString("pt-BR") : "—"}</div>
-      <div style={{fontSize:12,color:"#64748b",marginTop:6}}>Desde a base de 27/10/2026 · detecção provisória</div>
+      <div style={{fontSize:13,color:"#64748b"}}>Reativações detectadas</div>
+      <div style={{fontSize:32,color:"#15803d",fontWeight:800,marginTop:8}}>{dados?.disponivel ? (dados.detectados??0).toLocaleString("pt-BR") : "—"}</div>
+      <div style={{fontSize:12,color:"#64748b",marginTop:6}}>Pedidos desde 09/11/2026 · aguardando homologação</div>
       <div style={{fontSize:12,color:"#2563eb",marginTop:12,fontWeight:600}}>Ver clientes reativados →</div>
     </article>
   </Link>;

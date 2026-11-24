@@ -1,4 +1,5 @@
 import { obterHierarquiaComercial } from "@/lib/hierarquia-comercial-filtros";
+import { listarPrepostosParaFiltro, carregarCodigosClientesPreposto } from "@/lib/prepostos-filtro-carteira";
 import { listarGerentesRegionais } from "@/lib/carteira-gerentes";
 import { acessoGlobal, regionaisPermitidas, representantesPermitidos } from "@/lib/escopo-acesso";
 import { carregarCarteira2027 } from "../../lib/carteira-2027-data";
@@ -16,6 +17,7 @@ import CartaoTaxaReativacao from "@/components/CartaoTaxaReativacao";
 import FiltrosRegionalRepresentante from "@/components/FiltrosRegionalRepresentante";
 import { carregarMapaRepresentantes, normalizarRepresentante } from "@/lib/representantes-oficiais";
 import CartaoClientesReativados from "@/components/CartaoClientesReativados";
+import { obterEscopoPrepostoCarteira, carregarClientesDoPreposto } from "@/lib/escopo-preposto-carteira";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -172,7 +174,11 @@ export default async function CarteiraPage({
   }
 
   // Controle de acesso aplicado ANTES dos filtros da interface.
-  if (perfil === "REPRESENTANTE" || perfil === "REP") {
+  const escopoPreposto = await obterEscopoPrepostoCarteira(sessao);
+  const clientesDesignadosPreposto = escopoPreposto ? await carregarClientesDoPreposto(escopoPreposto.usuario) : null;
+  if (escopoPreposto) {
+    clientes = clientes.filter(c => clientesDesignadosPreposto!.has(codigo(c.codigoCliente)));
+  } else if (perfil === "REPRESENTANTE" || perfil === "REP") {
     const mapaAcesso = await carregarMapaRepresentantes();
     const repAtual = normalizarRepresentante(
       repLogin,
@@ -227,6 +233,8 @@ export default async function CarteiraPage({
   // Cadastro oficial em tempo de consulta, sem JSON estatico.
   const mapaRepresentantes = await carregarMapaRepresentantes();
 
+  const prepostosVisiveis = await listarPrepostosParaFiltro(sessao, mapaRepresentantes);
+
   const aliasesPorAtual = new Map<string, string[]>();
 
   for (const [antigo, atual] of mapaRepresentantes.dePara) {
@@ -263,9 +271,16 @@ export default async function CarteiraPage({
   const supervisoresAtivos = [...new Set(repsAtivosVisiveis.map(r => r.supervisor_codigo))]
     .sort((a, b) => (nomesRegionais[a] || a).localeCompare(nomesRegionais[b] || b, "pt-BR"))
     .map(id => ({ codigo: id, nome: nomesRegionais[id] || id }));
-  const representantesAtivos = repsAtivosVisiveis.map(r => ({
-    codigo: r.codigo, nome: r.nome, supervisor_codigo: r.supervisor_codigo
-  })).sort((a, b) => a.nome.localeCompare(b.nome, "pt-BR"));
+    const representantesAtivos = [
+    ...repsAtivosVisiveis.map(r => ({
+      codigo: r.codigo, nome: r.nome, supervisor_codigo: r.supervisor_codigo
+    })),
+    ...prepostosVisiveis.map(p => ({
+      codigo: p.usuario,
+      nome: p.nome + " - PREPOSTO",
+      supervisor_codigo: p.supervisor_codigo
+    }))
+  ].sort((a, b) => a.nome.localeCompare(b.nome, "pt-BR"));
   const identificadoresDoRep = (codigoAtivo: string): string[] => {
     const encontrado = oficiais.find(r => r.codigo === codigoAtivo);
     return encontrado ? [encontrado.codigo, ...encontrado.aliases_utilizaveis] : [];
@@ -277,6 +292,18 @@ export default async function CarteiraPage({
   const representantes = new Map<string, string>(hierarquia.representantes
     .filter(r => !codigo(parametros.supervisor) || r.supervisor === codigo(parametros.supervisor))
     .map(r => [r.codigo,r.nome]));
+
+  // Preposto nao pode navegar entre carteiras pela URL.
+  if (
+    escopoPreposto &&
+    (
+      codigo(parametros.supervisor) ||
+      codigo(parametros.representante) ||
+      String(parametros.gerente ?? "").trim()
+    )
+  ) {
+    redirect("/carteira");
+  }
 
   const supervisorFiltro = codigo(parametros.supervisor);
   const representanteFiltro = codigo(parametros.representante);
@@ -296,15 +323,31 @@ export default async function CarteiraPage({
     }
   }
 
+    if (!escopoPreposto) {
   if (representanteFiltro) {
-    const codigosDoSelecionado = new Set(
-      repsAtivosVisiveis.some(r => r.codigo === representanteFiltro)
-        ? identificadoresDoRep(representanteFiltro)
-        : []
-    );
-    clientes = clientes.filter(c => (c.representantes || []).some(r =>
-      codigosDoSelecionado.has(codigo(r.codigo))
-    ));
+    const preposto = prepostosVisiveis.find(p => p.usuario === representanteFiltro);
+    if (preposto) {
+      const codigos = await carregarCodigosClientesPreposto(preposto.usuario);
+      // Respeita o escopo ja aplicado ao usuario antes deste filtro.
+      clientes = clientes.filter(c => codigos.has(codigo(c.codigoCliente)) &&
+        (c.representantes || []).some(r =>
+          identificadoresDoRep(preposto.codigo_representante_principal)
+            .includes(codigo(r.codigo))
+        )
+      );
+    } else {
+      const codigosDoSelecionado = new Set(
+        repsAtivosVisiveis.some(r => r.codigo === representanteFiltro)
+          ? identificadoresDoRep(representanteFiltro)
+          : []
+      );
+      clientes = clientes.filter(c => (c.representantes || []).some(r =>
+        codigosDoSelecionado.has(codigo(r.codigo))
+      ));
+    }
+  }
+  } else if (representanteFiltro && representanteFiltro !== escopoPreposto.usuario) {
+    clientes = [];
   }
 
   // PAINEL_RECEITA_2027: contagem por cliente e Grupo Cliente distinto.
@@ -464,7 +507,7 @@ export default async function CarteiraPage({
             </div>
           ) : (
             <>
-              {!["REPRESENTANTE", "REP"].includes(perfil) && (
+                            {(!["REPRESENTANTE", "REP"].includes(perfil) || prepostosVisiveis.length > 0) && !escopoPreposto && (
 <form
                 action="/carteira"
                 method="GET"
@@ -480,13 +523,13 @@ export default async function CarteiraPage({
                   marginBottom: 22
                 }}
               >
-                 <label style={{display: "grid", gap: 6}}>
+                 {!["REPRESENTANTE", "REP"].includes(perfil) && (<label style={{display: "grid", gap: 6}}>
                    <span style={{fontSize: 12}}>Gerente</span>
                    <select name="gerente" defaultValue={gerenteFiltro} style={{padding: 10, minWidth: 190}}>
                      <option value="">Todos</option>
                      {gerentesDisponiveis.map(g => <option key={g} value={g}>{g}</option>)}
                    </select>
-                 </label>
+                 </label>)}
                 <FiltrosRegionalRepresentante
                   supervisorAtual={supervisorFiltro}
                   representanteAtual={representanteFiltro}

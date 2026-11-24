@@ -57,15 +57,13 @@ export default function Sidebar({ nome, perfil, usuario }: Props) {
   }
 
   const itens = [
-    { titulo: "Visão Comercial", href: "/venda-mais#planejamento", rota: "/venda-mais" },
+    { titulo: "Mapa de Oportunidades", href: "/venda-mais#planejamento", rota: "/venda-mais" },
     { titulo: "Metas", href: "/metas", rota: "/metas" },
     { titulo: "Campanhas Representantes", href: "/campanha", rota: "/campanha" },
     { titulo: "Campanhas de Clientes", href: "/campanhas-clientes", rota: "/campanhas-clientes" },
     { titulo: "Treinamentos", href: "/campanha/treinamentos", rota: "/campanha/treinamentos" },
     { titulo: "Share", href: "/share", rota: "/share" },
     { titulo: "Gestão de Atendimentos", href: "/gestao-atendimentos", rota: "/gestao-atendimentos" },
-    { titulo: "Venda Mais+", href: "/venda-mais#venda-mais", rota: "/venda-mais" },
-    { titulo: "Análise Preditiva", href: "/venda-mais#clientes", rota: "/venda-mais" },
     { titulo: "Gestão de Carteira 2027", href: "/carteira", rota: "/carteira" },
     { titulo: "Carteira 02 por Representante", href: "/carteira/por-representante", rota: "/carteira/por-representante" }
   ];
@@ -80,8 +78,18 @@ export default function Sidebar({ nome, perfil, usuario }: Props) {
     "Gestão de Carteira 2027",
   ]);
 
+  const ehDemoRep = usuario.trim().toLowerCase() === "demo.rep";
+
+  const ehPreposto =
+    ehRepresentante &&
+    /^\d{5,}$/.test(usuario.trim());
+
   const itensVisiveis = ehRepresentante
-    ? itens.filter(item => menusRepresentante.has(item.titulo))
+    ? itens.filter(item =>
+        (menusRepresentante.has(item.titulo) &&
+         !(ehPreposto && item.titulo === "Campanhas Representantes")) ||
+        (ehDemoRep && item.rota === "/venda-mais")
+      )
     : itens;
 
 

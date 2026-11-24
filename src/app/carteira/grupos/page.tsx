@@ -14,6 +14,7 @@ import { cleanCode } from "@/lib/comercial-data";
 import { buscarVendasClientes360 } from "@/lib/visao360-supabase";
 import Sidebar from "@/components/Sidebar";
 import AnaliseComercialGrupo360 from "@/components/AnaliseComercialGrupo360";
+import { obterEscopoPrepostoCarteira, carregarClientesDoPreposto } from "@/lib/escopo-preposto-carteira";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -279,7 +280,11 @@ export default async function VisaoGrupos({ searchParams }: Props) {
   const representantesAutorizados =
     await representantesPermitidos(usuarioAutenticado);
 
-  if (perfil === "REPRESENTANTE" || perfil === "REP") {
+  const escopoPreposto = await obterEscopoPrepostoCarteira(usuarioAutenticado);
+  const clientesDesignadosPreposto = escopoPreposto ? await carregarClientesDoPreposto(escopoPreposto.usuario) : null;
+  if (escopoPreposto) {
+    clientes = clientes.filter(c => clientesDesignadosPreposto!.has(codigo(c.codigoCliente)));
+  } else if (perfil === "REPRESENTANTE" || perfil === "REP") {
     clientes = clientes.filter(c =>
       c.representanteAtual?.some(r =>
         codigo(r.codigo) === repLogin
@@ -414,7 +419,7 @@ export default async function VisaoGrupos({ searchParams }: Props) {
     .filter(r => !supervisorFiltro || r.supervisor === supervisorFiltro)
     .map(r => [r.codigo, `${r.codigo} - ${r.nome}`]));
 
-  const gruposPainel = grupos
+  const gruposPainel = (escopoPreposto && representanteFiltro && representanteFiltro !== escopoPreposto.usuario ? [] : grupos)
     .map(g => ({
       ...g,
       clientes: g.clientes.filter(c =>
@@ -424,7 +429,7 @@ export default async function VisaoGrupos({ searchParams }: Props) {
         (!supervisorFiltro || c.supervisores?.some(
           s => codigo(s.codigo) === supervisorFiltro
         )) &&
-        (!representanteFiltro || c.representanteAtual?.some(
+        (!!escopoPreposto || !representanteFiltro || c.representanteAtual?.some(
           r => codigo(r.codigo) === representanteFiltro
         ))
       ),

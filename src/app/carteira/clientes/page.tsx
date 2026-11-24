@@ -1,4 +1,5 @@
 import { carregarCarteira2027 } from "../../../lib/carteira-2027-data";
+import { listarPrepostosParaFiltro, carregarCodigosClientesPreposto } from "@/lib/prepostos-filtro-carteira";
 import "server-only";
 
 import fs from "node:fs/promises";
@@ -10,6 +11,7 @@ import { validarToken } from "@/lib/auth";
 import { acessoGlobal, regionaisPermitidas, representantesPermitidos } from "@/lib/escopo-acesso";
 import Sidebar from "@/components/Sidebar";
 import { carregarMapaRepresentantes, normalizarRepresentante } from "@/lib/representantes-oficiais";
+import { obterEscopoPrepostoCarteira, carregarClientesDoPreposto } from "@/lib/escopo-preposto-carteira";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -124,11 +126,16 @@ export default async function ListaCarteira({ searchParams }: Props) {
       regionaisPermitidas(u),
     ]);
 
+  const escopoPreposto = await obterEscopoPrepostoCarteira(u);
+  const clientesDesignadosPreposto = escopoPreposto ? await carregarClientesDoPreposto(escopoPreposto.usuario) : null;
   const acessoNacional = acessoGlobal(u);
 
-  const repsPermitidos = repsAutorizados === null
+  const repsPermitidos = (escopoPreposto ? new Set([escopoPreposto.titular]) : (repsAutorizados === null
     ? null
-    : new Set(repsAutorizados.map(cod));
+    : new Set(repsAutorizados.map(cod))));
+
+  const prepostosVisiveis = await listarPrepostosParaFiltro(u, mapaOficial);
+  const prepostoFiltro = prepostosVisiveis.find(p => p.usuario === representante);
 
   const normalizarVinculos = (
     vinculos: Vinculo[] | undefined
@@ -198,6 +205,9 @@ export default async function ListaCarteira({ searchParams }: Props) {
   });
 
   // Escopo de acesso aplicado antes dos filtros da URL.
+  if (escopoPreposto) {
+    clientes = clientes.filter(c => clientesDesignadosPreposto!.has(cod(c.codigoCliente)));
+  }
   if (!acessoNacional) {
     if (repsPermitidos === null || repsPermitidos.size === 0) {
       clientes = [];
@@ -214,7 +224,10 @@ export default async function ListaCarteira({ searchParams }: Props) {
   if (
     supervisor &&
     regionaisAutorizadas !== null &&
-    !regionaisAutorizadas.has(supervisor)
+    !regionaisAutorizadas.has(supervisor) &&
+    !(prepostoFiltro && prepostoFiltro.supervisor_codigo === supervisor) &&
+    !(["REPRESENTANTE", "REP"].includes(perfil) &&
+      normalizarRepresentante(cod(u.codigo_representante), mapaOficial).supervisor === supervisor)
   ) {
     clientes = [];
   } else if (supervisor) {
@@ -227,7 +240,16 @@ export default async function ListaCarteira({ searchParams }: Props) {
     ? normalizarRepresentante(representante, mapaOficial).codigo
     : "";
 
-  if (
+  if (!escopoPreposto) {
+  if (prepostoFiltro) {
+    const codigos = await carregarCodigosClientesPreposto(prepostoFiltro.usuario);
+    clientes = clientes.filter(c =>
+      codigos.has(cod(c.codigoCliente)) &&
+      c.representantes?.some(r =>
+        cod(r.codigo) === prepostoFiltro.codigo_representante_principal
+      )
+    );
+  } else if (
     repFiltro &&
     repsPermitidos !== null &&
     !repsPermitidos.has(repFiltro)
@@ -240,6 +262,10 @@ export default async function ListaCarteira({ searchParams }: Props) {
       )
     );
   }
+  } else if (representante && representante !== escopoPreposto.usuario) {
+    clientes = [];
+  }
+
 
   // Receita fiscal: gestores podem consultar baixadas somente na visão fiscal.
   // Todas as carteiras comerciais e seus indicadores financeiros excluem BAIXADA.

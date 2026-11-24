@@ -2,6 +2,10 @@ import { NextRequest, NextResponse } from "next/server";
 import { validarToken } from "@/lib/auth";
 import { carregarCarteira2027 } from "@/lib/carteira-2027-data";
 import { acessoGlobal, representantesPermitidos, regionaisPermitidas } from "@/lib/escopo-acesso";
+import {
+  carregarMapaRepresentantes,
+  normalizarRepresentante
+} from "@/lib/representantes-oficiais";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -40,12 +44,42 @@ export async function GET(req: NextRequest) {
       perfil === "SUPERVISOR" || perfil === "GERENTE" ? regionaisPermitidas(usuario) : Promise.resolve(null)
     ]);
     const global = acessoGlobal(usuario);
+    const ehRepresentante =
+      perfil === "REPRESENTANTE" || perfil === "REP";
+
+    const mapaCentral = ehRepresentante
+      ? await carregarMapaRepresentantes()
+      : null;
+
+    const repSessao = limpaCodigo(usuario.codigo_representante);
+
+    const repAtual = mapaCentral
+      ? normalizarRepresentante(repSessao, mapaCentral).codigo
+      : "";
+
+    const cadastroRep = mapaCentral?.cadastro.get(repAtual);
+
+    if (ehRepresentante && (
+      !repSessao ||
+      !cadastroRep?.ativo ||
+      !reps?.some(r => limpaCodigo(r) === repSessao)
+    )) {
+      return NextResponse.json(
+        { sucesso: false, erro: "Representante nao autorizado." },
+        { status: 403 }
+      );
+    }
     const hoje = hojeBrasil();
     const elegiveis = carteira.clientes.filter(c => {
       if (c.carteira !== "02_REATIVACAO") return false;
       if (!global) {
         if (perfil === "REPRESENTANTE" || perfil === "REP") {
-          if (!c.representanteAtual.some(r => reps?.includes(limpaCodigo(r.codigo)))) return false;
+          if (!mapaCentral || !c.representantes.some(r =>
+            normalizarRepresentante(
+              limpaCodigo(r.codigo),
+              mapaCentral
+            ).codigo === repAtual
+          )) return false;
         } else if (perfil === "SUPERVISOR" || perfil === "GERENTE") {
           if (!c.supervisores.some(s => regionais?.has(limpaCodigo(s.codigo)))) return false;
         } else return false;
@@ -62,8 +96,12 @@ export async function GET(req: NextRequest) {
       sucesso:true, pagina, total:elegiveis.length,
       clientes:elegiveis.slice(inicio,inicio+tamanho).map(c=>({
         codigoCliente:c.codigoCliente, razaoSocial:c.razaoSocial,
-        representante:c.representanteAtual.map(r=>r.codigo).join(", "),
-        supervisor:c.supervisores.map(s=>s.codigo).join(", "),
+        representante: ehRepresentante
+          ? repAtual
+          : c.representanteAtual.map(r => r.codigo).join(", "),
+        supervisor: ehRepresentante
+          ? String(cadastroRep?.codigo_supervisor || "")
+          : c.supervisores.map(s => s.codigo).join(", "),
         ultimaCompra:c.ultimaCompra ?? null,
         diasSemCompra:diasSemCompra(c.ultimaCompra,hoje),
         situacao:c.situacao

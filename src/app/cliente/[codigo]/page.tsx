@@ -170,8 +170,49 @@ export default async function ClientePage({ params }: Props) {
     "ms"
   );
 
-  const cliente = carteira.find(
-    (c) => cleanCode(c.codigo) === codigoLimpo
+  const clienteComercial360 = carteira.find(
+    c => cleanCode(c.codigo) === codigoLimpo
+  );
+
+  // Somente clientes existentes na Carteira 2027.
+  // A verificacao de permissao anterior permanece intacta.
+  const cadastroSnapshot360 = !clienteComercial360
+    ? (await carregarCarteira2027()).clientes.find(
+        c => cleanCode(c.codigoCliente) === codigoLimpo
+      )
+    : undefined;
+
+  const vinculoSnapshot360 = cadastroSnapshot360
+    ?.representantes
+    .map(r =>
+      normalizarRepresentante(r.codigo, mapaRepresentantes)
+    )
+    .find(r =>
+      mapaRepresentantes.cadastro.get(r.codigo)?.ativo
+    );
+
+  const cidadeSnapshot360 = cadastroSnapshot360?.cidade || "";
+  const ufSnapshot360 = cadastroSnapshot360?.uf || "";
+
+  const cliente = clienteComercial360 || (
+    cadastroSnapshot360
+      ? {
+          codigo: codigoLimpo,
+          razao: cadastroSnapshot360.razaoSocial || "",
+          rep: vinculoSnapshot360?.codigo || "",
+          sup: vinculoSnapshot360?.supervisor || "",
+          cidade: cidadeSnapshot360,
+          uf: ufSnapshot360,
+          cityKey: cidadeSnapshot360 && ufSnapshot360
+            ? cidadeSnapshot360.toUpperCase() +
+              " - " + ufSnapshot360
+            : "",
+          limite: cadastroSnapshot360.limiteDisponivel || 0,
+          bloqueio: cadastroSnapshot360.bloqueadoFinanceiro
+            ? "Bloqueado"
+            : ""
+        }
+      : undefined
   );
 
   if (!cliente) {

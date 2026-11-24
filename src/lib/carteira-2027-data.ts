@@ -1,3 +1,4 @@
+import { aplicarRegraGrupoCarioca } from "./carteira-2027-regra-carioca";
 import {
   carregarSituacoesReceita,
   consultarSituacaoReceita,
@@ -513,7 +514,7 @@ export async function carregarCarteira2027(): Promise<ResultadoCarteira2027> {
         "./carteira-snapshot-supabase"
       );
 
-      const resultado = await lerSnapshotCarteira();
+      const resultado = await aplicarRegraGrupoCarioca(await lerSnapshotCarteira());
 
       cacheSupabase = {
         expira: Date.now() + 30 * 60 * 1000,

@@ -82,7 +82,7 @@ export default function Sidebar({ nome, perfil, usuario }: Props) {
 
   const ehPreposto =
     ehRepresentante &&
-    /^\d{5,}$/.test(usuario.trim());
+    ((/^\d{5,}$/.test(usuario.trim()) || usuario.trim().toLowerCase() === "demo.rep3") || usuario.trim().toLowerCase() === "demo.rep3");
 
   const itensVisiveis = ehRepresentante
     ? itens.filter(item =>

@@ -476,7 +476,44 @@ async function carregarFinanceiro() {
     throw new Error(`${nome} não possui uma planilha válida.`);
   }
 
+  const linhasCabecalho = XLSX.utils.sheet_to_json<unknown[]>(ws, {
+    header: 1,
+    defval: "",
+    blankrows: true,
+  });
+
+  const normalizarCabecalho = (valor: unknown) =>
+    String(valor ?? "")
+      .normalize("NFD")
+      .replace(/[\u0300-\u036f]/g, "")
+      .trim()
+      .toUpperCase();
+
+  const indiceCabecalho = linhasCabecalho.findIndex(linha => {
+    if (!Array.isArray(linha)) return false;
+
+    const colunas = linha.map(normalizarCabecalho);
+
+    return (
+      colunas.includes("CODIGO CLIENTE") &&
+      colunas.includes("LIMITE DISPONIVEL") &&
+      colunas.includes("LIMITE CREDITO")
+    );
+  });
+
+  if (indiceCabecalho < 0) {
+    throw new Error(
+      "FINANCEIRO: cabecalho oficial nao encontrado."
+    );
+  }
+
+  console.log(
+    "[FINANCEIRO] Cabecalho identificado na linha:",
+    indiceCabecalho + 1
+  );
+
   const rows = XLSX.utils.sheet_to_json<Record<string, any>>(ws, {
+    range: indiceCabecalho,
     defval: null,
   });
 
@@ -515,6 +552,12 @@ async function carregarFinanceiro() {
   console.log(
     `[FINANCEIRO] ${m.size.toLocaleString("pt-BR")} clientes financeiros carregados.`
   );
+
+  if (m.size < 1000) {
+    throw new Error(
+      `FINANCEIRO: somente ${m.size} clientes encontrados. Verifique o arquivo.`
+    );
+  }
 
   return m;
 }

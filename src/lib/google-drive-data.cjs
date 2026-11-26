@@ -18,6 +18,7 @@ const NOMES_OFICIAIS = [
   "DADOS_PREDITIVA_FAT_4.parquet",
   "DADOS_PREDITIVA_FAT_5.parquet",
   "DADOS_PREDITIVA_FAT_6.parquet",
+  "CARTEIRA CLIENTES ATUAL.xlsx",
   "base clientes.xlsx",
   "REP MONTAR ANALISES_ATUALIZADO 2026.xlsx",
   "DADOS PRDITIVA LIMITE.xlsx",

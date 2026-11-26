@@ -1,7 +1,7 @@
 "use client";
 
 import Link from "next/link";
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 
 type Linha = {
   codigo: string;
@@ -73,6 +73,55 @@ export default function PainelGestaoReativacao({
   const [agenda, setAgenda] = useState("");
   const [pagina, setPagina] = useState(1);
 
+  // REATIVACOES_DETECTADAS_CARTEIRA_2027
+  // Mesma origem do indicador da Gestao de Carteira 2027.
+  const [reativacoesDetectadas, setReativacoesDetectadas] =
+    useState<number | null>(null);
+
+  useEffect(() => {
+    const controlador = new AbortController();
+
+    setReativacoesDetectadas(null);
+
+    const parametros = new URLSearchParams({
+      supervisor,
+      representante,
+      supervisoresGrupo: "",
+    });
+
+    fetch(`/api/reativacao/indicador?${parametros.toString()}`, {
+      credentials: "same-origin",
+      cache: "no-store",
+      signal: controlador.signal,
+    })
+      .then(async resposta => {
+        if (!resposta.ok) {
+          throw new Error("Indicador indisponivel");
+        }
+
+        return resposta.json();
+      })
+      .then(dados => {
+        if (controlador.signal.aborted) return;
+
+        if (
+          !dados.disponivel ||
+          typeof dados.detectados !== "number"
+        ) {
+          throw new Error("Dados de reativacao indisponiveis");
+        }
+
+        setReativacoesDetectadas(dados.detectados);
+      })
+      .catch(() => {
+        if (!controlador.signal.aborted) {
+          setReativacoesDetectadas(null);
+        }
+      });
+
+    return () => controlador.abort();
+  }, [supervisor, representante]);
+
   const hoje = dataLocal();
   const amanha = proximoDia(hoje);
 
@@ -116,7 +165,7 @@ export default function PainelGestaoReativacao({
 
   const indicadores = [
     ["Carteira", filtradas.length],
-    ["Reativados", filtradas.filter(l => l.classificacao === "REATIVADO").length],
+    ["Reativações detectadas", reativacoesDetectadas ?? "—"],
     ["Em negociação", filtradas.filter(l => l.classificacao === "EM_NEGOCIACAO").length],
     ["Aguardando crédito", filtradas.filter(l => l.classificacao === "AGUARDANDO_CREDITO").length],
     ["Ações amanhã", filtradas.filter(l =>
@@ -182,7 +231,7 @@ export default function PainelGestaoReativacao({
               color: "#9a3412",
               marginTop: 5,
             }}>
-              {valor.toLocaleString("pt-BR")}
+              {typeof valor === "number" ? valor.toLocaleString("pt-BR") : valor}
             </strong>
           </div>
         ))}

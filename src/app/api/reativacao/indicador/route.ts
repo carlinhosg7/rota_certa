@@ -99,18 +99,16 @@ export async function GET(req:NextRequest){
   const competenciaValidada =
     String(competenciaAtual?.status ?? "").toUpperCase() === "VALIDADO";
 
-  const confirmados = competenciaValidada
-    ? new Set(
-        eventosVisiveis
-          .filter(e => e.confirmado)
-          .map(e => codigo(e.codigo_cliente))
-      ).size
-    : 0;
+  const confirmados = new Set(
+    eventosVisiveis
+      .filter(e => e.confirmado)
+      .map(e => codigo(e.codigo_cliente))
+  ).size;
 
   const reativados = elegiveis.filter(x => x.reativado).length;
 
   return NextResponse.json({disponivel:true,competencia:"2026-10-01",referencia:"2026-10-27",
-   elegiveis:elegiveis.length,reativados,detectados,confirmados,percentualDetectado:elegiveis.length?100*detectados/elegiveis.length:null,percentual:elegiveis.length?reativados*100/elegiveis.length:null,
+   elegiveis:elegiveis.length,reativados,detectados,confirmados,competenciaValidada,percentualDetectado:elegiveis.length?100*detectados/elegiveis.length:null,percentual:elegiveis.length?reativados*100/elegiveis.length:null,
    aviso:"Acompanhamento provisório desde 27/10/2026; reativação detectada por mudança de carteira, sem homologação."});
  }catch(e){console.error("[REATIVACAO INDICADOR]",e);return NextResponse.json({erro:"Indicador indisponível"},{status:500});}
 }

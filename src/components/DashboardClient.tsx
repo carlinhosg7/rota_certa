@@ -91,11 +91,15 @@ type Data = {
   erro?: string;
 };
 
-export default function DashboardClient() {
+export default function DashboardClient({
+  inicial = { supervisor: "", representante: "" }
+}: {
+  inicial?: { supervisor: string; representante: string }
+}) {
   const router = useRouter();
 
-  const [sup, setSup] = useState("");
-  const [rep, setRep] = useState("");
+  const [sup, setSup] = useState(inicial.supervisor);
+  const [rep, setRep] = useState(inicial.representante);
   const [cidade, setCidade] = useState("");
   const [cidadeClientes, setCidadeClientes] = useState("");
   const [data, setData] = useState<Data | null>(null);
@@ -155,7 +159,7 @@ export default function DashboardClient() {
   }
 
   useEffect(() => {
-    load("", "", "", "");
+    load(inicial.supervisor, inicial.representante, "", "");
     registrarEvento("ACESSO_DASHBOARD");
   }, []);
 

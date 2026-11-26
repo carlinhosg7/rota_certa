@@ -1,4 +1,4 @@
-import { carregarMapaRepresentantes } from "@/lib/representantes-oficiais";
+import { carregarMapaRepresentantes, normalizarRepresentante } from "@/lib/representantes-oficiais";
 import { representantesPermitidos, regionaisPermitidas } from "@/lib/escopo-acesso";
 import { NextRequest, NextResponse } from "next/server";
 import { cookies } from "next/headers";
@@ -40,10 +40,39 @@ export async function GET(req: NextRequest) {
     }
 
     // Permissoes reais do usuario autenticado.
-    const [repsEscopo, supsEscopo] = await Promise.all([
-      representantesPermitidos(u),
-      regionaisPermitidas(u),
-    ]);
+    const perfilSessao = String(u.perfil || "").toUpperCase();
+    const ehRepresentante = ["REPRESENTANTE", "REP"].includes(perfilSessao);
+
+    let repOficialSessao = "";
+    let supervisorOficialSessao = "";
+
+    if (ehRepresentante) {
+      const mapa = await carregarMapaRepresentantes();
+      const login = String(
+        u.codigo_representante || u.usuario || ""
+      ).trim().replace(/\.0+$/, "");
+
+      const oficial = normalizarRepresentante(login, mapa);
+      const cadastro = mapa.cadastro.get(oficial.codigo);
+
+      if (!cadastro?.ativo || !oficial.supervisor) {
+        return NextResponse.json(
+          { erro: "Representante sem cadastro ou supervisor oficial" },
+          { status: 403 }
+        );
+      }
+
+      repOficialSessao = oficial.codigo;
+      supervisorOficialSessao = String(oficial.supervisor);
+    }
+
+    const repsEscopo = ehRepresentante
+      ? [repOficialSessao]
+      : await representantesPermitidos(u);
+
+    const supsEscopo = ehRepresentante
+      ? new Set([supervisorOficialSessao])
+      : await regionaisPermitidas(u);
 
     // =========================================================
     // BASES
@@ -71,9 +100,7 @@ export async function GET(req: NextRequest) {
 
       const perfilInicial = String(u.perfil || "").toUpperCase();
 
-      const repLoginInicial = String(
-        u.codigo_representante || u.usuario || ""
-      ).replace(/\.0+$/, "");
+      const repLoginInicial = repOficialSessao || String(u.codigo_representante || u.usuario || "").trim();
 
       const carteiraPermitida =
         perfilInicial === "REPRESENTANTE"
@@ -144,9 +171,7 @@ export async function GET(req: NextRequest) {
 
     const perfil = String(u.perfil || "").toUpperCase();
 
-    const repLogin = String(
-      u.codigo_representante || u.usuario || ""
-    ).replace(/\.0+$/, "");
+    const repLogin = repOficialSessao || String(u.codigo_representante || u.usuario || "").trim();
 
     let c = carteira;
     let v = vendas;

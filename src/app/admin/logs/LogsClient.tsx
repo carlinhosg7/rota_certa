@@ -20,6 +20,7 @@ export type LogAcesso = {
   sistema_operacional: string | null;
   session_id: string | null;
   evento: string | null;
+  rota: string | null;
 };
 
 const POR_PAGINA = 15;
@@ -57,6 +58,7 @@ export default function LogsClient({
   const [pesquisa, setPesquisa] = useState("");
   const [perfil, setPerfil] = useState("");
   const [evento, setEvento] = useState("");
+  const [rota, setRota] = useState("");
   const [data, setData] = useState("");
   const [pagina, setPagina] = useState(1);
 
@@ -74,6 +76,11 @@ export default function LogsClient({
     [logs]
   );
 
+  const rotas = useMemo(
+    () => [...new Set(logs.map(x => x.rota).filter(Boolean))]
+      .sort() as string[],
+    [logs]
+  );
   const filtrados = useMemo(() => {
     const termo = pesquisa.trim().toLowerCase();
 
@@ -92,12 +99,14 @@ export default function LogsClient({
       const eventoOK =
         !evento || log.evento === evento;
 
+      const rotaOK =
+        !rota || log.rota === rota;
       const dataOK =
         !data || obterDataSP(log.data_hora) === data;
 
-      return pesquisaOK && perfilOK && eventoOK && dataOK;
+      return pesquisaOK && perfilOK && eventoOK && rotaOK && dataOK;
     });
-  }, [logs, pesquisa, perfil, evento, data]);
+  }, [logs, pesquisa, perfil, evento, rota, data]);
 
   const totalPaginas = Math.max(
     1,
@@ -121,12 +130,13 @@ export default function LogsClient({
     setPesquisa("");
     setPerfil("");
     setEvento("");
+    setRota("");
     setData("");
     setPagina(1);
   }
 
   const possuiFiltro =
-    pesquisa || perfil || evento || data;
+    pesquisa || perfil || evento || rota || data;
 
   return (
     <>
@@ -181,6 +191,22 @@ export default function LogsClient({
         </div>
 
         <div className="logs-filter">
+          <select
+            value={rota}
+            onChange={(e) => {
+              setRota(e.target.value);
+              resetPagina();
+            }}
+          >
+            <option value="">Todas as telas</option>
+            {rotas.map(item => (
+              <option key={item} value={item}>
+                {item}
+              </option>
+            ))}
+          </select>
+        </div>
+        <div className="logs-filter">
           <input
             type="date"
             value={data}
@@ -222,6 +248,7 @@ export default function LogsClient({
               <th>PERFIL</th>
               <th>REP.</th>
               <th>EVENTO</th>
+              <th>TELA / ROTA</th>
               <th>LOCALIZAÇÃO</th>
               <th>DISPOSITIVO</th>
               <th>NAVEGADOR</th>
@@ -279,6 +306,7 @@ export default function LogsClient({
                     </span>
                   </td>
 
+                  <td>{log.rota ?? "-"}</td>
                   <td>{localizacao}</td>
 
                   <td>
@@ -300,7 +328,7 @@ export default function LogsClient({
             {registrosPagina.length === 0 && (
               <tr>
                 <td
-                  colSpan={10}
+                  colSpan={11}
                   className="logs-empty"
                 >
                   Nenhum registro encontrado.

@@ -71,6 +71,7 @@ export default function Sidebar({ nome, perfil, usuario }: Props) {
     ["REPRESENTANTE", "REP"].includes(perfil.trim().toUpperCase());
 
   const menusRepresentante = new Set([
+    "Mapa de Oportunidades",
     "Metas",
     "Campanhas Representantes",
     "Campanhas de Clientes",
@@ -187,12 +188,13 @@ export default function Sidebar({ nome, perfil, usuario }: Props) {
                     aria-expanded={campanhasRepresentantesAbertas}
                     aria-label="Abrir ou fechar campanhas representantes"
                     style={{
-                      border: "1px solid #f0c88f",
-                      background: "#fff7ed",
-                      color: "#9a3412",
+                      border: 0,
+                      background: "transparent",
+                      color: "#422006",
                       borderRadius: 8,
-                      padding: "0 12px",
-                      fontSize: 18,
+                      padding: "0 10px",
+                      fontSize: 12,
+                      fontWeight: 700,
                       cursor: "pointer"
                     }}
                   >
@@ -343,7 +345,7 @@ export default function Sidebar({ nome, perfil, usuario }: Props) {
           );
         })}
 
-        {!ehRepresentante && (
+        {(
           <>
             <Link
               href="/gestao-reativacao"
@@ -388,6 +390,14 @@ export default function Sidebar({ nome, perfil, usuario }: Props) {
               Representantes
             </Link>
 
+            <Link
+              href="/admin/gestao-reativacao"
+              style={estiloLink(
+                pathname.startsWith("/admin/gestao-reativacao")
+              )}
+            >
+              Acompanhamento de Reativação
+            </Link>
             <Link
               href="/admin/logs"
               style={estiloLink(

@@ -1,3 +1,4 @@
+import { aplicarRepresentantesAtuaisCarteira } from "./carteira-representantes-atuais";
 import { aplicarRegraGrupoCarioca } from "./carteira-2027-regra-carioca";
 import {
   carregarSituacoesReceita,
@@ -514,7 +515,17 @@ export async function carregarCarteira2027(): Promise<ResultadoCarteira2027> {
         "./carteira-snapshot-supabase"
       );
 
-      const resultado = await aplicarRegraGrupoCarioca(await lerSnapshotCarteira());
+      const snapshot = await lerSnapshotCarteira();
+
+      // Ativacao controlada da fonte oficial de representantes.
+      // Sem a chave, preserva o comportamento da versao funcional.
+      const carteiraAtualizada =
+        process.env.KIDY_CARTEIRA_ATUAL_2027 === "1"
+          ? await aplicarRepresentantesAtuaisCarteira(snapshot)
+          : snapshot;
+
+      // A regra Carioca deve ser aplicada por ultimo.
+      const resultado = await aplicarRegraGrupoCarioca(carteiraAtualizada);
 
       cacheSupabase = {
         expira: Date.now() + 30 * 60 * 1000,

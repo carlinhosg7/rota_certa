@@ -3,7 +3,7 @@ import { supabase } from "@/lib/supabase";
 import { validarToken } from "@/lib/auth";
 
 const EVENTOS_PERMITIDOS = new Set([
-  "ACESSO_DASHBOARD",
+  "ACESSO_DASHBOARD", "ACESSO_TELA",
   "SELECIONOU_SUPERVISOR",
   "SELECIONOU_REPRESENTANTE",
   "SELECIONOU_CIDADE",
@@ -46,6 +46,22 @@ export async function POST(req: NextRequest) {
       );
     }
 
+    // Armazenar somente o caminho, sem parametros de URL.
+    const rotaBruta = String(body?.rota ?? "");
+    const rota = rotaBruta.split("?")[0].split("#")[0];
+
+    if (evento === "ACESSO_TELA") {
+      if (
+        !/^\/[a-zA-Z0-9/_-]*$/.test(rota) ||
+        rota.length > 240 ||
+        rota.startsWith("/api/")
+      ) {
+        return NextResponse.json(
+          { erro: "Rota invalida." },
+          { status: 400 }
+        );
+      }
+    }
     const ua =
       req.headers.get("user-agent") || "";
 
@@ -128,7 +144,8 @@ export async function POST(req: NextRequest) {
         session_id:
           sessionId,
 
-        evento,
+        evento, rota: evento === "ACESSO_TELA" ? rota : null,
+        recurso: evento === "ACESSO_TELA" ? String(body?.recurso ?? "").slice(0, 160) || null : null,
       });
 
     if (error) {

@@ -165,7 +165,7 @@ export default async function Reativados({searchParams}:{searchParams:Promise<{s
                     <td style={{padding:10}}>{e.codigo_supervisor}</td>
                     <td style={{padding:10}}>
                       {e.confirmado
-                        ? "Confirmação registrada; verificar competência"
+                        ? "Pedido confirmado individualmente"
                         : "Aguardando homologação"}
                     </td>
                   </tr>

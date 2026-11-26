@@ -116,7 +116,8 @@ export default async function LogsPage() {
       navegador,
       sistema_operacional,
       session_id,
-      evento
+      evento,
+      rota
     `)
     .order("data_hora", {
       ascending: false,
@@ -209,6 +210,8 @@ export default async function LogsPage() {
           ? String(log.session_id)
           : null,
 
+      rota: log.rota != null ? String(log.rota) : null,
+
       evento:
         log.evento != null
           ? String(log.evento)
@@ -237,7 +240,7 @@ export default async function LogsPage() {
             </p>
           </div>
 
-          <div className="logs-header-actions">
+          <div className="logs-header-actions"><a href="/admin/auditoria" style={{fontWeight:800,color:"#a34b00",padding:10}}>Auditoria completa por tela / usuario</a>
             <div className="logs-admin-info">
               <strong>
                 {usuario.nome ||

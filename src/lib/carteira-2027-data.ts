@@ -517,12 +517,10 @@ export async function carregarCarteira2027(): Promise<ResultadoCarteira2027> {
 
       const snapshot = await lerSnapshotCarteira();
 
-      // Ativacao controlada da fonte oficial de representantes.
-      // Sem a chave, preserva o comportamento da versao funcional.
+      // A carteira oficial deve ser aplicada em todos os ambientes.
+      // Nunca utilizar vinculos historicos por ausencia de variavel.
       const carteiraAtualizada =
-        process.env.KIDY_CARTEIRA_ATUAL_2027 === "1"
-          ? await aplicarRepresentantesAtuaisCarteira(snapshot)
-          : snapshot;
+        await aplicarRepresentantesAtuaisCarteira(snapshot);
 
       // A regra Carioca deve ser aplicada por ultimo.
       const resultado = await aplicarRegraGrupoCarioca(carteiraAtualizada);

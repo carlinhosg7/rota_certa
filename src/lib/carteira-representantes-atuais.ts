@@ -14,7 +14,7 @@ function cab(v: unknown): string {
     .replace(/\s+/g, " ").trim().toUpperCase();
 }
 
-type Entrada = { rep: string; nome: string };
+type Entrada = { rep: string; nome: string; razao: string };
 
 async function obterCadastroAtual(): Promise<Map<string, Entrada>> {
   await atualizarCatalogoDrive(true);
@@ -33,6 +33,7 @@ async function obterCadastroAtual(): Promise<Map<string, Entrada>> {
   const idCol = colunas.indexOf("CODIGO");
   const repCol = colunas.indexOf("CODIGO REPRESENTANTE");
   const nomeCol = colunas.indexOf("REPRESENTANTE");
+  const razaoCol = colunas.indexOf("RAZAO SOCIAL");
   const situacaoCol = colunas.indexOf("SITUACAO");
   const mapa = new Map<string, Entrada>();
   let conflitos = 0;
@@ -45,7 +46,11 @@ async function obterCadastroAtual(): Promise<Map<string, Entrada>> {
     if (!rep) throw new Error(`Cliente ${id} sem codigo representante no cadastro atual`);
     const anterior = mapa.get(id);
     if (anterior && anterior.rep !== rep) conflitos++;
-    mapa.set(id, { rep, nome: String(linha[nomeCol] ?? "").trim() });
+    mapa.set(id, {
+      rep,
+      nome: String(linha[nomeCol] ?? "").trim(),
+      razao: razaoCol >= 0 ? String(linha[razaoCol] ?? "").trim() : "",
+    });
   }
   if (conflitos) throw new Error(`${NOME_ARQUIVO}: ${conflitos} clientes com representantes conflitantes`);
   if (mapa.size < 10000) throw new Error(`${NOME_ARQUIVO}: apenas ${mapa.size} clientes validos, carga recusada`);
@@ -55,18 +60,97 @@ async function obterCadastroAtual(): Promise<Map<string, Entrada>> {
 type Carteira = { clientes: ClienteCarteira[]; resumo: Record<string, unknown> };
 
 export async function aplicarRepresentantesAtuaisCarteira(origem: Carteira): Promise<Carteira> {
-  const [cadastro, oficiais] = await Promise.all([
+  const [{ listarClientesExcluidos }, { gerarCarteira2027DoDrive }] = await Promise.all([
+    import("./clientes-excluidos"),
+    import("./carteira-2027-data"),
+  ]);
+  const [cadastro, oficiais, excluidos] = await Promise.all([
     obterCadastroAtual(),
     carregarMapaRepresentantes(),
+    listarClientesExcluidos(),
   ]);
+
+  const existentes = new Set(origem.clientes.map(c => cod(c.codigoCliente)));
+  const ausentes = [...cadastro.keys()].filter(id => !existentes.has(id) && !excluidos.has(id));
+  const adicionais: ClienteCarteira[] = [];
+  let recuperadosDrive = 0;
+  let pendentes = 0;
+
+  // Recuperar ficha completa e ultima compra quando a base preditiva possuir o cliente.
+  let recuperados = new Map<string, ClienteCarteira>();
+  if (ausentes.length > 0) {
+    try {
+      const atual = await gerarCarteira2027DoDrive();
+      recuperados = new Map(atual.clientes.map(c => [cod(c.codigoCliente), c]));
+    } catch (erro) {
+      console.error("[CARTEIRA ATUAL] Base historica do Drive indisponivel; clientes nao encontrados ficarao pendentes.", erro);
+    }
+  }
+
+  for (const id of ausentes) {
+    const registro = cadastro.get(id)!;
+    const completo = recuperados.get(id);
+    if (completo) {
+      recuperadosDrive++;
+      adicionais.push({
+        ...completo,
+        codigoCliente: id,
+        flags: [...new Set([...(completo.flags ?? []), "RECUPERADO_DO_CADASTRO_OFICIAL"])],
+      });
+      continue;
+    }
+
+    // Nao atribuir Carteira 01/02, situacao fiscal ou ultima compra por suposicao.
+    pendentes++;
+    adicionais.push({
+      codigoCliente: id,
+      contatos: [],
+      endereco: "",
+      numeroEndereco: "",
+      bairro: "",
+      cidade: "",
+      uf: "",
+      razaoSocial: registro.razao || `CLIENTE ${id} - CADASTRO A COMPLETAR`,
+      cnpj: "",
+      grupoCliente: "",
+      codigoGrupoCliente: "",
+      carteira: "PENDENTE_QUALIFICACAO",
+      situacao: "PENDENTE_QUALIFICACAO",
+      faixa: "SEM_HISTORICO_VALIDADO",
+      mesesSemCompra: null,
+      representantes: [],
+      representanteAtual: [],
+      demaisRepresentantes: [],
+      supervisores: [],
+      bloqueadoFinanceiro: false,
+      limiteDisponivel: 0,
+      clienteAtivoCadastro: true,
+      situacaoEmpresa: "NAO_VERIFICADA",
+      compraFaturadaConfirmada: false,
+      classificacaoProvisoria: true,
+      flags: ["RECUPERADO_DO_CADASTRO_OFICIAL", "CADASTRO_A_COMPLETAR", "RECEITA_A_VERIFICAR"],
+      acompanhamento: {
+        status: "NAO_INICIADO",
+        potencial: "NAO_AVALIADO",
+        ultimaColecao: null,
+        ultimoContato: null,
+        motivoNaoCompra: null,
+        proximaAcao: null,
+        prazo: null,
+        responsavel: null,
+        resultado: null,
+      },
+    });
+  }
+
   let encontrados = 0;
   let naoEncontrados = 0;
   let repsNaoValidados = 0;
-  const clientes = origem.clientes.map(c => {
+  const clientes = [...origem.clientes, ...adicionais].map(c => {
     const atual = cadastro.get(cod(c.codigoCliente));
     if (!atual) {
       naoEncontrados++;
-      // Falha fechada: nao conceder acesso com base no representante historico.
+      // Nenhum acesso concedido por representante historico.
       return {
         ...c,
         representantes: [],
@@ -92,19 +176,19 @@ export async function aplicarRepresentantesAtuaisCarteira(origem: Carteira): Pro
     const codigoAtual = repAtual[0]?.codigo;
     return {
       ...c,
-      // O representante vigente e a fonte oficial dos filtros.
       representantes: repAtual,
       representanteAtual: repAtual,
-      // O supervisor vigente substitui o historico para filtros e acesso.
       supervisores: supervisor,
-      // Historico preservado; apenas reclassifica demais representantes.
-      demaisRepresentantes: (c.representantes ?? []).filter(
-        r => cod(r.codigo) !== codigoAtual
-      ),
+      demaisRepresentantes: (c.representantes ?? []).filter(r => cod(r.codigo) !== codigoAtual),
       flags: ativo ? c.flags : [...new Set([...(c.flags ?? []), "REPRESENTANTE_ATUAL_NAO_VALIDADO"])],
     };
   });
-  console.info(`[CARTEIRA ATUAL] cadastro=${cadastro.size} encontrados=${encontrados} semCadastro=${naoEncontrados} repsNaoValidados=${repsNaoValidados}`);
+
+  if (repsNaoValidados > 0) {
+    throw new Error(`[CARTEIRA ATUAL] ${repsNaoValidados} clientes com representante vigente nao validado. Carga recusada.`);
+  }
+  const qtdAdicionados = adicionais.length;
+  console.info(`[CARTEIRA ATUAL] cadastro=${cadastro.size} encontrados=${encontrados} semCadastro=${naoEncontrados} recuperados=${qtdAdicionados} historicoDrive=${recuperadosDrive} pendentes=${pendentes}`);
   return {
     ...origem,
     clientes,
@@ -115,6 +199,9 @@ export async function aplicarRepresentantesAtuaisCarteira(origem: Carteira): Pro
       cadastroRepresentantesEncontrados: encontrados,
       cadastroRepresentantesAusentes: naoEncontrados,
       cadastroRepresentantesNaoValidados: repsNaoValidados,
+      cadastroRepresentantesAdicionados: qtdAdicionados,
+      cadastroRepresentantesHistoricoDrive: recuperadosDrive,
+      cadastroRepresentantesPendentes: pendentes,
     },
   };
 }

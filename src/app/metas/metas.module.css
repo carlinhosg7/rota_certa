@@ -464,3 +464,90 @@
 .waterGray .waterLiquid { background:linear-gradient(180deg,#9ca3af,#6b7280 75%,#4b5563); }
 .waterGray .waterWave { background:rgba(156,163,175,.85); }
 .waterGray .waterWaveSecondary { background:rgba(209,213,219,.75); }
+
+
+/* METAS - QUATRO INDICADORES EM UMA PAGINA */
+
+.metasFourPeriod {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 12px;
+  flex-wrap: wrap;
+  padding: 12px 2px;
+}
+
+.metasFourPeriod strong {
+  font-size: 18px;
+  color: #3d2300;
+}
+
+.metasFourPeriod span {
+  font-size: 13px;
+  color: #975b21;
+}
+
+.metasFourLayout {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  gap: 22px;
+}
+
+.metasFourSection {
+  min-width: 0;
+  padding: 18px;
+  border: 1px solid #f0c88f;
+  border-radius: 18px;
+  background: #fffaf3;
+}
+
+.metasFourTitle {
+  margin: 0 0 12px;
+  font-size: 20px;
+  font-weight: 800;
+  color: #3d2300;
+}
+
+.metasFourSection .waterGrid {
+  margin: 0;
+}
+
+@media (max-width: 1100px) {
+  .metasFourSection .waterGrid {
+    grid-template-columns: 1fr;
+  }
+}
+
+@media (max-width: 600px) {
+  .metasFourSection {
+    padding: 12px;
+  }
+
+  .metasFourTitle {
+    font-size: 17px;
+  }
+}
+
+/* ENTRADA GERAL - LARANJA KIDY */
+
+.waterOrange .waterTankInner {
+  background: linear-gradient(180deg, #fff7ed, #ffedd5);
+}
+
+.waterOrange .waterTank {
+  border-color: #fdba74;
+  border-top-color: #f97316;
+  border-bottom-color: #f97316;
+}
+
+.waterOrange .waterLiquid {
+  background: linear-gradient(180deg, #fdba74, #f97316 65%, #ea580c);
+}
+
+.waterOrange .waterWave {
+  background: rgba(251, 146, 60, 0.85);
+}
+
+.waterOrange .waterWaveSecondary {
+  background: rgba(254, 215, 170, 0.7);
+}

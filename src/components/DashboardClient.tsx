@@ -102,6 +102,7 @@ export default function DashboardClient({
   const [rep, setRep] = useState(inicial.representante);
   const [cidade, setCidade] = useState("");
   const [cidadeClientes, setCidadeClientes] = useState("");
+  const [raioKm, setRaioKm] = useState("120");
   const [data, setData] = useState<Data | null>(null);
   const [loading, setLoading] = useState(false);
   const [erro, setErro] = useState("");
@@ -139,6 +140,16 @@ export default function DashboardClient({
       if (nr) q.set("representante", nr);
       if (nc) q.set("cidade", nc);
       if (nCidadeClientes) q.set("clientesCidade", nCidadeClientes);
+
+      const raioNumerico = Number(raioKm);
+      q.set(
+        "raio",
+        String(
+          Number.isFinite(raioNumerico) && raioNumerico > 0
+            ? raioNumerico
+            : 120
+        )
+      );
 
       const r = await fetch(`/api/comercial?${q.toString()}`, {
         cache: "no-store",
@@ -327,7 +338,34 @@ export default function DashboardClient({
 
           <label>
             Raio máximo
-            <input type="text" value="120 km" readOnly />
+            <input
+              type="number"
+              min="1"
+              step="1"
+              value={raioKm}
+              onChange={(e) => setRaioKm(e.target.value)}
+              onKeyDown={(e) => {
+                if (e.key === "Enter") {
+                  e.currentTarget.blur();
+                }
+              }}
+              onBlur={() => {
+                const valor = Number(raioKm);
+
+                if (
+                  !raioKm.trim() ||
+                  !Number.isFinite(valor) ||
+                  valor <= 0
+                ) {
+                  setErro("Informe uma distância válida em quilômetros.");
+                  return;
+                }
+
+                void load(sup, rep, cidade, cidadeClientes);
+              }}
+              aria-label="Raio máximo em quilômetros"
+              placeholder="Distância em km"
+            />
           </label>
         </div>
       </section>

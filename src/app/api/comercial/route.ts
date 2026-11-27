@@ -204,7 +204,7 @@ export async function GET(req: NextRequest) {
 
     const raio =
       Number.isFinite(raioParam) && raioParam > 0
-        ? Math.min(raioParam, 500)
+        ? raioParam
         : 120;
 
     // =========================================================

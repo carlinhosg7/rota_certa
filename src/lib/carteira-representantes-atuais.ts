@@ -69,7 +69,9 @@ export async function aplicarRepresentantesAtuaisCarteira(origem: Carteira): Pro
       // Falha fechada: nao conceder acesso com base no representante historico.
       return {
         ...c,
+        representantes: [],
         representanteAtual: [],
+        demaisRepresentantes: c.representantes ?? [],
         supervisores: [],
         flags: [...new Set([...(c.flags ?? []), "SEM_REPRESENTANTE_ATUAL_CADASTRO"])],
       };
@@ -90,11 +92,15 @@ export async function aplicarRepresentantesAtuaisCarteira(origem: Carteira): Pro
     const codigoAtual = repAtual[0]?.codigo;
     return {
       ...c,
+      // O representante vigente e a fonte oficial dos filtros.
+      representantes: repAtual,
       representanteAtual: repAtual,
       // O supervisor vigente substitui o historico para filtros e acesso.
       supervisores: supervisor,
       // Historico preservado; apenas reclassifica demais representantes.
-      demaisRepresentantes: (c.representantes ?? []).filter(r => cod(r.codigo) !== codigoAtual),
+      demaisRepresentantes: (c.representantes ?? []).filter(
+        r => cod(r.codigo) !== codigoAtual
+      ),
       flags: ativo ? c.flags : [...new Set([...(c.flags ?? []), "REPRESENTANTE_ATUAL_NAO_VALIDADO"])],
     };
   });

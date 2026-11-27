@@ -314,17 +314,25 @@ function adaptarCampanhaMetas(fonte:KIDYRespostaCampanha,tipo:string,regional:st
   };
 }
 
+const QUATRO_METAS = [
+  { tipo: "FATURAMENTO", titulo: "Faturamento" },
+  { tipo: "PRODUCAO", titulo: "Entrada Produção" },
+  { tipo: "KIDEX", titulo: "Entrada KIDEX" },
+  { tipo: "ENTRADA_GERAL", titulo: "Entrada Geral" },
+] as const;
+
 export default function MetasClient() {
-  const [tipo, setTipo] = useState("FATURAMENTO");
-  const [periodicidade, setPeriodicidade] = useState("MENSAL");
-  const [visaoKidex, setVisaoKidex] = useState("CADASTRO");
-  const [dados, setDados] = useState<Resposta | null>(null);
   const [regional, setRegional] = useState("");
   const [representante, setRepresentante] = useState("");
-  const [regionais, setRegionais] = useState<OpcaoRegional[]>([]);
-  const [representantes, setRepresentantes] = useState<OpcaoRepresentante[]>([]);
+
+  const [dados, setDados] =
+    useState<KIDYRespostaCampanha | null>(null);
+
   const [carregando, setCarregando] = useState(true);
   const [erro, setErro] = useState("");
+
+  // Mantem a competencia mensal ja utilizada no projeto.
+  const competencia = "2026-11-01";
 
   useEffect(() => {
     const controller = new AbortController();
@@ -332,31 +340,16 @@ export default function MetasClient() {
     async function carregar() {
       setCarregando(true);
       setErro("");
-      setDados(null);
 
       try {
-        if (periodicidade === "MENSAL") {
-          const competencia = "2026-11-01";
-          const parametrosCampanha = new URLSearchParams({competencia,supervisor:regional,representante});
-          const response = await fetch('/api/campanha?'+parametrosCampanha.toString(),{credentials:'same-origin',cache:'no-store',signal:controller.signal});
-          const json = await response.json();
-          if(!response.ok)throw Error(json.erro||'Falha ao consultar realizados mensais');
-          const resultado=adaptarCampanhaMetas(json as KIDYRespostaCampanha,tipo,regional,representante,competencia);
-          if(!controller.signal.aborted){setDados(resultado);setRegionais(resultado.filtros.regionais);setRepresentantes(resultado.filtros.representantes);}
-          return;
-        }
-        if(tipo==='PRODUCAO'||tipo==='ENTRADA_GERAL')throw Error('Este indicador esta disponivel na visao mensal.');
         const parametros = new URLSearchParams({
-          tipo,
-          periodicidade,
-          pedido: "TODOS",
-          ...(tipo === "KIDEX" ? { visao: visaoKidex } : {}),
-          regional,
+          competencia,
+          supervisor: regional,
           representante,
         });
 
         const resposta = await fetch(
-          `/api/metas?${parametros.toString()}`,
+          `/api/campanha?${parametros.toString()}`,
           {
             credentials: "same-origin",
             cache: "no-store",
@@ -367,19 +360,20 @@ export default function MetasClient() {
         const json = await resposta.json();
 
         if (!resposta.ok) {
-          throw new Error(json.erro || "Falha ao carregar metas");
+          throw new Error(
+            json.erro || "Falha ao carregar metas comerciais"
+          );
         }
 
         if (!controller.signal.aborted) {
-          setDados(json);
-          setRegionais(json.filtros?.regionais || []);
-          setRepresentantes(json.filtros?.representantes || []);
+          setDados(json as KIDYRespostaCampanha);
         }
-      } catch (error) {
+      } catch (e) {
         if (!controller.signal.aborted) {
+          setDados(null);
           setErro(
-            error instanceof Error
-              ? error.message
+            e instanceof Error
+              ? e.message
               : "Erro ao carregar indicadores"
           );
         }
@@ -390,53 +384,47 @@ export default function MetasClient() {
       }
     }
 
-    carregar();
+    void carregar();
 
     return () => controller.abort();
-  }, [tipo, periodicidade, regional, representante, visaoKidex]);
+  }, [regional, representante]);
+
+  const regionais: OpcaoRegional[] =
+    (dados?.filtros?.supervisores || []).map(
+      codigo => ({ codigo, nome: codigo })
+    );
+
+  const representantes: OpcaoRepresentante[] =
+    (dados?.filtros?.representantes || []).map(
+      item => ({
+        ...item,
+        regional,
+      })
+    );
 
   return (
     <section className={styles.container}>
       <div className={styles.filters}>
         <div>
-          <label htmlFor="tipo-meta">Indicador</label>
-          <select
-            id="tipo-meta"
-            value={tipo}
-            onChange={(event) => {setTipo(event.target.value);if(event.target.value==='PRODUCAO'||event.target.value==='ENTRADA_GERAL')setPeriodicidade('MENSAL');}}
-          >
-            <option value="FATURAMENTO">Faturamento</option>
-            <option value="PRODUCAO">Entrada Produção</option>
-            <option value="KIDEX">Entrada KIDEX</option>
-            <option value="ENTRADA_GERAL">Entrada Geral</option>
-          </select>
-        </div>
+          <label htmlFor="regional-meta">
+            Gestão Regional
+          </label>
 
-        <div>
-          <label htmlFor="periodicidade-meta">Período</label>
-          <select
-            id="periodicidade-meta"
-            value={periodicidade}
-            onChange={(event) => setPeriodicidade(event.target.value)}
-          >
-            <option value="MENSAL">Mensal</option>
-            <option value="SEMANAL" disabled={tipo==='PRODUCAO'||tipo==='ENTRADA_GERAL'}>Semanal</option>
-          </select>
-        </div>
-        <div>
-          <label htmlFor="regional-meta">Gestão Regional</label>
           <select
             id="regional-meta"
             value={regional}
-            onChange={(event) => {
+            onChange={event => {
               setRegional(event.target.value);
               setRepresentante("");
-              setRepresentantes([]);
             }}
           >
             <option value="">Todas as regionais</option>
-            {regionais.map((item) => (
-              <option key={item.codigo} value={item.codigo}>
+
+            {regionais.map(item => (
+              <option
+                key={item.codigo}
+                value={item.codigo}
+              >
                 {item.nome}
               </option>
             ))}
@@ -444,15 +432,26 @@ export default function MetasClient() {
         </div>
 
         <div>
-          <label htmlFor="representante-meta">Representante</label>
+          <label htmlFor="representante-meta">
+            Representante
+          </label>
+
           <select
             id="representante-meta"
             value={representante}
-            onChange={(event) => setRepresentante(event.target.value)}
+            onChange={event =>
+              setRepresentante(event.target.value)
+            }
           >
-            <option value="">Todos os representantes</option>
-            {representantes.map((item) => (
-              <option key={item.codigo} value={item.codigo}>
+            <option value="">
+              Todos os representantes
+            </option>
+
+            {representantes.map(item => (
+              <option
+                key={item.codigo}
+                value={item.codigo}
+              >
                 {item.codigo} - {item.nome}
               </option>
             ))}
@@ -460,98 +459,77 @@ export default function MetasClient() {
         </div>
       </div>
 
-      {tipo === "KIDEX" && periodicidade === "SEMANAL" && (
-        <div className={styles.kidexSwitch}>
-          <label htmlFor="visao-kidex">Visão KIDEX (somente pedido tipo 4)</label>
-          <select id="visao-kidex" value={visaoKidex} onChange={(event) => setVisaoKidex(event.target.value)}>
-            <option value="CADASTRO">Entrada KIDEX — Data de Cadastro</option>
-            <option value="ENTREGA">Venda para Faturamento Dentro do Mês — Data de Entrega</option>
-          </select>
+      <div className={styles.metasFourPeriod}>
+        <strong>Metas comerciais — visão mensal</strong>
+        <span>Competência: 11/2026</span>
+      </div>
+
+      {carregando && (
+        <div className={styles.message}>
+          Carregando os quatro indicadores...
         </div>
       )}
 
-      {carregando && (
-        <div className={styles.message}>Carregando indicadores...</div>
-      )}
-
       {erro && (
-        <div className={styles.error}>{erro}</div>
+        <div className={styles.error}>
+          {erro}
+        </div>
       )}
 
       {dados && !carregando && (
-        <>
-          <div className={styles.periodo}>
-            <strong>
-              {tipo === "KIDEX"
-                ? visaoKidex === "CADASTRO" ? "Entrada KIDEX" : "Venda para Faturamento Dentro do Mês"
-                : tipo === "FATURAMENTO" ? "Faturamento" : tipo === "PRODUCAO" ? "Entrada Produção" : tipo === "ENTRADA_GERAL" ? "Entrada Geral" : "Entrada de pedidos"}
-              {" — "}
-              {periodicidade === "MENSAL" ? "Mensal" : "Semanal"}
-            </strong>
-            <span>{dados.periodo.original}</span>
-          </div>
+        <div className={styles.metasFourLayout}>
+          {QUATRO_METAS.map(item => {
+            const resultado = adaptarCampanhaMetas(
+              dados,
+              item.tipo,
+              regional,
+              representante,
+              competencia
+            );
 
-          <div className={styles.cards}>
-            <Cartao
-              titulo="Meta em valores"
-              indicador={dados.indicadores.valores}
-              moeda
-            />
+            return (
+              <section
+                key={item.tipo}
+                className={styles.metasFourSection}
+              >
+                <h2 className={styles.metasFourTitle}>
+                  {item.titulo}
+                </h2>
 
-            <Cartao
-              titulo="Meta em pares"
-              indicador={dados.indicadores.pares}
-              moeda={false}
-            />
-          </div>
+                <div
+                  className={[
+                    styles.waterGrid,
+                    item.tipo === "FATURAMENTO"
+                      ? styles.waterGreen
+                      : item.tipo === "KIDEX"
+                        ? styles.waterGray
+                        : item.tipo === "ENTRADA_GERAL"
+                          ? styles.waterOrange
+                          : "",
+                  ].join(" ")}
+                >
+                  <CaixaAgua
+                    titulo="Atingimento em valores"
+                    indicador={resultado.indicadores.valores}
+                    moeda
+                    comparabilidadeValidada={
+                      resultado.comparabilidade.validada
+                    }
+                  />
 
-          <div className={`${styles.waterGrid} ${tipo === "FATURAMENTO" ? styles.waterGreen : tipo === "KIDEX" ? styles.waterGray : ""}`}>
-            <CaixaAgua
-              titulo="Atingimento em valores"
-              indicador={dados.indicadores.valores}
-              moeda
-              comparabilidadeValidada={dados.comparabilidade.validada}
-            />
-            <CaixaAgua
-              titulo="Atingimento em pares"
-              indicador={dados.indicadores.pares}
-              moeda={false}
-              comparabilidadeValidada={dados.comparabilidade.validada}
-            />
-          </div>
-          <details className={styles.details}>
-            <summary>Detalhes da auditoria e fontes</summary>
-
-            <p>
-              Escopo: {dados.comparabilidade.escopo}
-            </p>
-
-            <p>
-              Supervisores:{" "}
-              {dados.comparabilidade.supervisores.join(", ") ||
-                "Conforme fonte original"}
-            </p>
-
-            <p>
-              Representantes sem realizado:{" "}
-              {dados.conciliacao.representantesSemRealizado.join(", ") ||
-                "Nenhum"}
-            </p>
-
-            <p>
-              Representantes sem meta:{" "}
-              {dados.conciliacao.representantesSemMeta
-                .map((r) => `${r.codigo} - ${r.nome}`)
-                .join("; ") || "Nenhum"}
-            </p>
-
-            <ul>
-              {dados.avisos.map((aviso, index) => (
-                <li key={index}>{aviso}</li>
-              ))}
-            </ul>
-          </details>
-        </>
+                  <CaixaAgua
+                    titulo="Atingimento em pares"
+                    indicador={resultado.indicadores.pares}
+                    moeda={false}
+                    comparabilidadeValidada={
+                      resultado.comparabilidade.validada
+                    }
+                  />
+                </div>
+              </section>
+            );
+          })}
+        </div>
       )}
     </section>
   );

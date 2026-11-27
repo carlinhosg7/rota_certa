@@ -78,7 +78,7 @@ export async function aplicarRepresentantesAtuaisCarteira(origem: Carteira): Pro
 
   // Recuperar ficha completa e ultima compra quando a base preditiva possuir o cliente.
   let recuperados = new Map<string, ClienteCarteira>();
-  if (ausentes.length > 0) {
+  if (ausentes.length > 0 && process.env.KIDY_CARTEIRA_HISTORICO_SINCRONO_2027 === "1") {
     try {
       const atual = await gerarCarteira2027DoDrive();
       recuperados = new Map(atual.clientes.map(c => [cod(c.codigoCliente), c]));

@@ -59,16 +59,20 @@ async function obterCadastroAtual(): Promise<Map<string, Entrada>> {
 
 type Carteira = { clientes: ClienteCarteira[]; resumo: Record<string, unknown> };
 
-export async function aplicarRepresentantesAtuaisCarteira(origem: Carteira): Promise<Carteira> {
-  const [{ listarClientesExcluidos }, { gerarCarteira2027DoDrive }] = await Promise.all([
-    import("./clientes-excluidos"),
-    import("./carteira-2027-data"),
-  ]);
-  const [cadastro, oficiais, excluidos] = await Promise.all([
+export async function prepararFontesOficiaisCarteira() {
+  const { listarClientesExcluidos } = await import("./clientes-excluidos");
+  return Promise.all([
     obterCadastroAtual(),
     carregarMapaRepresentantes(),
     listarClientesExcluidos(),
-  ]);
+  ] as const);
+}
+
+export async function aplicarRepresentantesAtuaisCarteira(
+  origem: Carteira,
+  fontes?: Awaited<ReturnType<typeof prepararFontesOficiaisCarteira>>
+): Promise<Carteira> {
+  const [cadastro, oficiais, excluidos] = fontes ?? await prepararFontesOficiaisCarteira();
 
   const existentes = new Set(origem.clientes.map(c => cod(c.codigoCliente)));
   const ausentes = [...cadastro.keys()].filter(id => !existentes.has(id) && !excluidos.has(id));
@@ -80,6 +84,7 @@ export async function aplicarRepresentantesAtuaisCarteira(origem: Carteira): Pro
   let recuperados = new Map<string, ClienteCarteira>();
   if (ausentes.length > 0 && process.env.KIDY_CARTEIRA_HISTORICO_SINCRONO_2027 === "1") {
     try {
+      const { gerarCarteira2027DoDrive } = await import("./carteira-2027-data");
       const atual = await gerarCarteira2027DoDrive();
       recuperados = new Map(atual.clientes.map(c => [cod(c.codigoCliente), c]));
     } catch (erro) {

@@ -6,7 +6,6 @@ import { validarToken } from "@/lib/auth";
 
 import {
   getData,
-  carregarCarteiraOficial360,
   MAPA_SUPERVISORES,
   resumirClientes,
   sugerirRota,
@@ -93,19 +92,10 @@ export async function GET(req: NextRequest) {
     }
 
     if (!repInicial) {
-      const [{ carteira }, mapaRepresentantes] = await Promise.all([
-        carregarCarteiraOficial360(),
-        carregarMapaRepresentantes(),
-      ]);
-
+      // Resposta inicial: apenas filtros oficiais, sem Excel ou Parquets.
+      const mapaRepresentantes = await carregarMapaRepresentantes();
       const perfilInicial = String(u.perfil || "").toUpperCase();
-
       const repLoginInicial = repOficialSessao || String(u.codigo_representante || u.usuario || "").trim();
-
-      const carteiraPermitida =
-        perfilInicial === "REPRESENTANTE"
-          ? carteira.filter((c) => c.rep === repLoginInicial)
-          : carteira;
 
       const cadastroPermitido = [
         ...mapaRepresentantes.cadastro.values()

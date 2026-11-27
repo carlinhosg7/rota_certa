@@ -1,4 +1,4 @@
-import { aplicarRepresentantesAtuaisCarteira } from "./carteira-representantes-atuais";
+import { aplicarRepresentantesAtuaisCarteira, prepararFontesOficiaisCarteira } from "./carteira-representantes-atuais";
 import { aplicarRegraGrupoCarioca } from "./carteira-2027-regra-carioca";
 import {
   carregarSituacoesReceita,
@@ -515,12 +515,17 @@ export async function carregarCarteira2027(): Promise<ResultadoCarteira2027> {
         "./carteira-snapshot-supabase"
       );
 
-      const snapshot = await lerSnapshotCarteira();
+      // Carregar snapshot e cadastro oficial em paralelo; nenhum dado e exposto
+      // antes da aplicacao das regras de representantes e prepostos.
+      const [snapshot, fontesOficiais] = await Promise.all([
+        lerSnapshotCarteira(),
+        prepararFontesOficiaisCarteira(),
+      ]);
 
       // A carteira oficial deve ser aplicada em todos os ambientes.
       // Nunca utilizar vinculos historicos por ausencia de variavel.
       const carteiraAtualizada =
-        await aplicarRepresentantesAtuaisCarteira(snapshot);
+        await aplicarRepresentantesAtuaisCarteira(snapshot, fontesOficiais);
 
       // A regra Carioca deve ser aplicada por ultimo.
       const resultado = await aplicarRegraGrupoCarioca(carteiraAtualizada);

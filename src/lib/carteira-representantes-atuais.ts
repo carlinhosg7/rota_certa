@@ -17,7 +17,7 @@ function cab(v: unknown): string {
 type Entrada = { rep: string; nome: string; razao: string };
 
 async function obterCadastroAtual(): Promise<Map<string, Entrada>> {
-  await atualizarCatalogoDrive(true);
+  await atualizarCatalogoDrive();
   // Fonte oficial: nunca utilizar dados historicos como substituto silencioso.
   const buffer = await lerArquivoComercial(NOME_ARQUIVO);
   const livro = XLSX.read(buffer, { type: "buffer" });

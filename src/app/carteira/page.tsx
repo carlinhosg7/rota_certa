@@ -458,6 +458,12 @@ export default async function CarteiraPage({
             <b>{perfil}</b>
           </div>
         </header>
+          {/* EXPORTACAO_CARTEIRAS_2027_V6 */}
+          <nav aria-label="Exportacao das carteiras" style={{display:"flex",flexWrap:"wrap",gap:12,marginTop:16,marginBottom:14}}>
+            <Link href={`/api/carteira/exportar?${new URLSearchParams({carteira:"ativa",gerente:gerenteFiltro,supervisor:supervisorFiltro,representante:representanteFiltro,receita:receitaValida})}`} style={{padding:"11px 16px",background:"#15803d",borderRadius:9,color:"white",fontWeight:700,textDecoration:"none"}}>Exportar Excel - Carteira 01</Link>
+            <Link href={`/api/carteira/exportar?${new URLSearchParams({carteira:"reativacao",gerente:gerenteFiltro,supervisor:supervisorFiltro,representante:representanteFiltro,receita:receitaValida})}`} style={{padding:"11px 16px",background:"#b45309",borderRadius:9,color:"white",fontWeight:700,textDecoration:"none"}}>Exportar Excel - Carteira 02</Link>
+          </nav>
+
 
         <div style={{padding: "24px 0 50px"}}>
 <div style={{

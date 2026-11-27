@@ -370,6 +370,15 @@ export default async function ListaCarteira({ searchParams }: Props) {
             </p>
           </div>
         </header>
+          {/* EXPORTACAO_CARTEIRAS_2027_V6 */}
+          {(filtro === "ativa" || filtro === "reativacao") && (
+            <div style={{marginTop:14,display:"flex",gap:12}}>
+              <Link href={`/api/carteira/exportar?${new URLSearchParams({carteira:filtro,supervisor,representante,busca,receita})}`} style={{padding:"11px 16px",background:"#15803d",color:"white",borderRadius:9,fontWeight:700,textDecoration:"none"}}>
+                Exportar todos os clientes em Excel
+              </Link>
+            </div>
+          )}
+
 
         <div style={{ padding: "22px 0 50px" }}>
           <Link
